@@ -2,9 +2,7 @@
 
 > Enterprise-grade lead intelligence, email discovery, SMTP verification, AI outreach automation, follow-up management, and delivery tracking — built for recruiters, job seekers, and growth teams.
 
-**Live Domain:** https://www.vishwateja.online  
-**Outbound Sender:** jobs@vishwateja.online  
-**Reply Routing:** reply@vishwateja.online  
+
 
 ---
 
