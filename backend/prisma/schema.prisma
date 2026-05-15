@@ -1,0 +1,326 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Session ──────────────────────────────────────────────────────────────────
+model Session {
+  id             String        @id @default(cuid())
+  sessionName    String        @unique
+  totalProfiles  Int           @default(0)
+  totalEmails    Int           @default(0)
+  totalVerified  Int           @default(0)
+  rawInput       String?       @db.Text
+  isArchived     Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+
+  leads          Lead[]
+  exports        SheetExport[]
+  logs           ProcessingLog[]
+
+  @@index([createdAt])
+  @@index([isArchived])
+}
+
+// ─── Company ─────────────────────────────────────────────────────────────────
+model Company {
+  id             String   @id @default(cuid())
+  companyName    String
+  domain         String?  @unique
+  learnedPattern String?
+  leadCount      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  leads          Lead[]
+
+  @@index([companyName])
+  @@index([domain])
+}
+
+// ─── Lead ─────────────────────────────────────────────────────────────────────
+model Lead {
+  id          String   @id @default(cuid())
+  fullName    String
+  firstName   String
+  middleNames String?
+  lastName    String
+  role        String?
+  location    String?
+  linkedinUrl String?
+  sessionId   String
+  companyId   String?
+  createdAt   DateTime @default(now())
+
+  session     Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  company     Company?         @relation(fields: [companyId], references: [id])
+  emails      GeneratedEmail[]
+  status      LeadStatus?
+  sentEmails  SentEmail[]
+
+  @@unique([fullName, companyId])
+  @@index([sessionId])
+  @@index([companyId])
+  @@index([fullName])
+}
+
+// ─── GeneratedEmail ───────────────────────────────────────────────────────────
+model GeneratedEmail {
+  id                 String   @id @default(cuid())
+  leadId             String
+  email              String   @unique
+  pattern            String
+  confidence         String   // HIGH, MEDIUM, LOW, INVALID
+  verificationStatus String   @default("PENDING") // PENDING, VALID, INVALID, CATCH_ALL, RISKY, UNVERIFIED
+  isVerified         Boolean  @default(false)
+  isPrimary          Boolean  @default(false)
+  smtpResult         String?  // VERIFIED, REJECTED, TIMEOUT, GREYLISTED, BLOCKED, UNKNOWN
+  validationReason   String?  // Human-readable explanation
+  validatedAt        DateTime?
+  createdAt          DateTime @default(now())
+
+  lead               Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([email])
+  @@index([verificationStatus])
+  @@index([confidence])
+}
+
+// ─── LeadStatus ───────────────────────────────────────────────────────────────
+model LeadStatus {
+  id               String   @id @default(cuid())
+  leadId           String   @unique
+  stage            String   @default("NEW") // NEW, ENRICHED, VERIFIED, CONTACTED, REPLIED, FOLLOW_UP_PENDING, FOLLOW_UP_SENT, INTERESTED, CLOSED, REJECTED
+  syncedToSheet    Boolean  @default(false)
+  outreachSent     Boolean  @default(false)
+  replied          Boolean  @default(false)
+  followUpNeeded   Boolean  @default(false)
+  followUpCount    Int      @default(0)
+  lastContactedAt  DateTime?
+  nextFollowUpAt   DateTime?
+  updatedAt        DateTime @updatedAt
+
+  lead             Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+}
+
+// ─── SheetExport ─────────────────────────────────────────────────────────────
+model SheetExport {
+  id            String   @id @default(cuid())
+  sessionId     String
+  googleSheetId String?
+  sheetName     String
+  sheetUrl      String?
+  exportedRows  Int      @default(0)
+  status        String   @default("PENDING")
+  createdAt     DateTime @default(now())
+
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+// ─── ProcessingLog ────────────────────────────────────────────────────────────
+model ProcessingLog {
+  id        String   @id @default(cuid())
+  sessionId String?
+  message   String   @db.Text
+  level     String   @default("info")
+  createdAt DateTime @default(now())
+
+  session   Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+  @@index([createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OUTREACH SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── OutreachCampaign ─────────────────────────────────────────────────────────
+model OutreachCampaign {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?  @db.Text
+  status        String   @default("DRAFT") // DRAFT, ACTIVE, PAUSED, COMPLETED, ARCHIVED
+  subject       String?
+  body          String?  @db.Text
+  tone          String   @default("professional")
+  resumeId      String?
+  github        String?
+  linkedin      String?
+  portfolio     String?
+  jobLink       String?
+  jobId         String?
+  customNote    String?  @db.Text
+  followUpEnabled Boolean @default(false)
+  followUpDelay  Int     @default(3) // days
+  followUpBody   String? @db.Text
+  totalContacts Int      @default(0)
+  totalSent     Int      @default(0)
+  totalReplied  Int      @default(0)
+  totalBounced  Int      @default(0)
+  totalFailed   Int      @default(0)
+  sendRate      Int      @default(5)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sentEmails    SentEmail[]
+  queuedJobs    EmailQueueJob[]
+  followUps     FollowUp[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ─── FollowUp ────────────────────────────────────────────────────────────────
+model FollowUp {
+  id            String   @id @default(cuid())
+  campaignId    String
+  leadId        String
+  sentEmailId   String?  // original email this follows up on
+  subject       String
+  body          String   @db.Text
+  status        String   @default("SCHEDULED") // SCHEDULED, SENT, CANCELLED, SKIPPED
+  scheduledFor  DateTime
+  sentAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  campaign      OutreachCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([scheduledFor])
+}
+
+// ─── SentEmail ────────────────────────────────────────────────────────────────
+model SentEmail {
+  id            String   @id @default(cuid())
+  campaignId    String?
+  leadId        String?
+  toEmail       String
+  toName        String?
+  fromEmail     String
+  subject       String
+  htmlBody      String   @db.Text
+  textBody      String?  @db.Text
+  templateUsed  String?
+  resendId      String?  // Resend API message ID
+  messageId     String?  // Email Message-ID header (for threading)
+  threadId      String?  // Thread grouping ID
+  inReplyTo     String?  // In-Reply-To header value
+  references    String?  // References header value
+  status        String   @default("QUEUED") // QUEUED, SENT, DELIVERED, BOUNCED, FAILED, REPLIED
+  errorMessage  String?  @db.Text
+  retries       Int      @default(0)
+  maxRetries    Int      @default(3)
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  bouncedAt     DateTime?
+  repliedAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  campaign      OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  lead          Lead?             @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  events        EmailEvent[]
+
+  @@index([campaignId])
+  @@index([leadId])
+  @@index([status])
+  @@index([toEmail])
+  @@index([createdAt])
+  @@index([resendId])
+}
+
+// ─── EmailEvent ───────────────────────────────────────────────────────────────
+model EmailEvent {
+  id          String   @id @default(cuid())
+  sentEmailId String
+  eventType   String   // sent, delivered, bounced, opened, clicked, complained, replied
+  payload     String?  @db.Text // raw webhook payload
+  createdAt   DateTime @default(now())
+
+  sentEmail   SentEmail @relation(fields: [sentEmailId], references: [id], onDelete: Cascade)
+
+  @@index([sentEmailId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// ─── EmailQueueJob ────────────────────────────────────────────────────────────
+model EmailQueueJob {
+  id            String   @id @default(cuid())
+  campaignId    String?
+  leadId        String?
+  toEmail       String
+  toName        String?
+  subject       String
+  htmlBody      String   @db.Text
+  textBody      String?  @db.Text
+  templateUsed  String?
+  priority      Int      @default(0) // higher = sooner
+  status        String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED, DEAD
+  errorMessage  String?  @db.Text
+  retries       Int      @default(0)
+  maxRetries    Int      @default(3)
+  scheduledFor  DateTime @default(now())
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  campaign      OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([campaignId])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// USER ASSETS — Persistent identity/profile manager
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── UserResume ───────────────────────────────────────────────────────────────
+model UserResume {
+  id        String   @id @default(cuid())
+  name      String   // e.g. "SDE Resume", "AI/ML Resume"
+  url       String   // link to resume (Google Drive, Dropbox, etc.)
+  tags      String?  // comma-separated: "sde,fullstack,backend"
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDefault])
+}
+
+// ─── UserProfile — professional links (GitHub, LinkedIn, Portfolio, etc.) ─────
+model UserProfile {
+  id        String   @id @default(cuid())
+  type      String   // github, linkedin, portfolio, website, twitter
+  label     String   // e.g. "Primary GitHub", "AI Portfolio"
+  url       String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([isDefault])
+}
+
+// ─── UserSignature — reusable email signatures ────────────────────────────────
+model UserSignature {
+  id        String   @id @default(cuid())
+  name      String   // e.g. "Professional", "Casual"
+  content   String   @db.Text // signature text/html
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDefault])
+}

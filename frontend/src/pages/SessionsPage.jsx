@@ -1,0 +1,223 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { getSessions, deleteSession, archiveSession } from '../api';
+import { Layers, Calendar, Users, Mail, Database, ChevronRight, Trash2, Archive, RotateCcw } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { toast } from 'sonner';
+import clsx from 'clsx';
+
+export default function SessionsPage() {
+    const navigate = useNavigate();
+    const [sessions, setSessions] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [tab, setTab] = useState('active'); // active | archived
+    const [deleteTarget, setDeleteTarget] = useState(null);
+
+    const load = () => {
+        setLoading(true);
+        getSessions({ archived: tab === 'archived' ? 'true' : 'false' })
+            .then(res => setSessions(res.data))
+            .finally(() => setLoading(false));
+    };
+
+    useEffect(() => { load(); }, [tab]);
+
+    const handleDelete = async () => {
+        if (!deleteTarget) return;
+        try {
+            await deleteSession(deleteTarget.id);
+            toast.success(`Session "${deleteTarget.name}" deleted`);
+            setSessions(prev => prev.filter(s => s.id !== deleteTarget.id));
+        } catch (e) {
+            toast.error(e.response?.data?.error || 'Delete failed');
+        }
+        setDeleteTarget(null);
+    };
+
+    const handleArchive = async (id, name) => {
+        try {
+            await archiveSession(id, true);
+            toast.success(`"${name}" archived`);
+            setSessions(prev => prev.filter(s => s.id !== id));
+        } catch (e) {
+            toast.error(e.response?.data?.error || 'Archive failed');
+        }
+    };
+
+    const handleUnarchive = async (id, name) => {
+        try {
+            await archiveSession(id, false);
+            toast.success(`"${name}" restored`);
+            setSessions(prev => prev.filter(s => s.id !== id));
+        } catch (e) {
+            toast.error(e.response?.data?.error || 'Restore failed');
+        }
+    };
+
+    return (
+        <div className="space-y-6 max-w-5xl mx-auto">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight">Pipelines</h1>
+                    <p className="text-gray-400 text-sm mt-1">History of all outreach intelligence runs.</p>
+                </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex gap-1 bg-surface/30 p-1 rounded-xl w-fit border border-white/5">
+                <button
+                    onClick={() => setTab('active')}
+                    className={clsx('px-5 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2',
+                        tab === 'active' ? 'bg-primary/20 text-primary border border-primary/30' : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    )}
+                >
+                    <Layers className="w-3.5 h-3.5" /> Active
+                </button>
+                <button
+                    onClick={() => setTab('archived')}
+                    className={clsx('px-5 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2',
+                        tab === 'archived' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    )}
+                >
+                    <Archive className="w-3.5 h-3.5" /> Archived
+                </button>
+            </div>
+
+            <div className="space-y-4 relative">
+                <div className="absolute left-6 top-4 bottom-4 w-px bg-white/10" />
+                {loading ? (
+                    <div className="text-center py-10 text-gray-500">Loading sessions...</div>
+                ) : sessions.length === 0 ? (
+                    <div className="text-center py-16 text-gray-500">
+                        <Layers className="w-10 h-10 mx-auto mb-3 opacity-40" />
+                        <p>{tab === 'archived' ? 'No archived sessions.' : 'No active sessions. Run the Intelligence Engine to create one.'}</p>
+                    </div>
+                ) : (
+                    sessions.map((s, i) => (
+                        <motion.div
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: i * 0.04 }}
+                            key={s.id}
+                            className="relative pl-16 pr-4"
+                        >
+                            <div className={clsx("absolute left-[20px] top-6 w-3 h-3 rounded-full ring-4 ring-background z-10",
+                                tab === 'archived' ? 'bg-amber-500' : 'bg-primary'
+                            )} />
+                            <div className="glass-card p-6 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center hover:bg-surface/50 hover:border-primary/20 transition-all group">
+                                {/* Clickable main area */}
+                                <div
+                                    onClick={() => navigate(`/leads?sessionId=${s.id}`)}
+                                    className="flex-1 min-w-0 cursor-pointer"
+                                >
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <Layers className={clsx("w-5 h-5 shrink-0", tab === 'archived' ? 'text-amber-500' : 'text-primary')} />
+                                        <h3 className="text-lg font-bold text-white truncate group-hover:text-primary transition-colors">{s.sessionName}</h3>
+                                        {tab === 'archived' && (
+                                            <span className="text-[9px] uppercase font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">Archived</span>
+                                        )}
+                                    </div>
+                                    <p className="text-sm text-gray-500 flex items-center gap-2">
+                                        <Calendar className="w-4 h-4" /> {new Date(s.createdAt).toLocaleString()}
+                                    </p>
+                                </div>
+
+                                {/* Stats */}
+                                <div className="flex items-center gap-6">
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-xs text-gray-500 uppercase tracking-wide flex items-center gap-1"><Users className="w-3 h-3" /> Profiles</span>
+                                        <span className="text-xl font-semibold mt-1">{s._count?.leads || s.totalProfiles || 0}</span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-xs text-gray-500 uppercase tracking-wide flex items-center gap-1"><Mail className="w-3 h-3" /> Emails</span>
+                                        <span className="text-xl font-semibold mt-1 text-primary">{s.totalEmails || 0}</span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                        <span className="text-xs text-gray-500 uppercase tracking-wide flex items-center gap-1"><Database className="w-3 h-3" /> Exports</span>
+                                        <span className="text-xl font-semibold mt-1 text-emerald-400">{s._count?.exports || 0}</span>
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div className="flex items-center gap-1 ml-2">
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); navigate(`/leads?sessionId=${s.id}`); }}
+                                            title="View leads"
+                                            className="p-2 rounded-lg text-gray-500 hover:text-primary hover:bg-primary/10 transition-colors"
+                                        >
+                                            <ChevronRight className="w-4 h-4" />
+                                        </button>
+                                        {tab === 'active' ? (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleArchive(s.id, s.sessionName); }}
+                                                title="Archive session"
+                                                className="p-2 rounded-lg text-gray-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+                                            >
+                                                <Archive className="w-4 h-4" />
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleUnarchive(s.id, s.sessionName); }}
+                                                title="Restore session"
+                                                className="p-2 rounded-lg text-gray-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                                            >
+                                                <RotateCcw className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: s.id, name: s.sessionName }); }}
+                                            title="Delete session permanently"
+                                            className="p-2 rounded-lg text-gray-500 hover:text-danger hover:bg-danger/10 transition-colors"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </motion.div>
+                    ))
+                )}
+            </div>
+
+            {/* Delete Confirmation Modal */}
+            {deleteTarget && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setDeleteTarget(null)}>
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="bg-surface border border-danger/30 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-start gap-4 mb-6">
+                            <div className="p-3 rounded-xl bg-danger/15 border border-danger/30">
+                                <Trash2 className="w-6 h-6 text-danger" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-white mb-1">Delete Session</h3>
+                                <p className="text-sm text-gray-400">
+                                    Are you sure you want to permanently delete <span className="text-white font-medium">"{deleteTarget.name}"</span>?
+                                </p>
+                                <p className="text-xs text-gray-500 mt-2">
+                                    All leads, emails, and logs in this session will be permanently removed. This cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex gap-3 justify-end">
+                            <button
+                                onClick={() => setDeleteTarget(null)}
+                                className="px-5 py-2 rounded-xl text-sm font-medium bg-surface border border-white/10 text-gray-300 hover:bg-white/5 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleDelete}
+                                className="px-5 py-2 rounded-xl text-sm font-semibold bg-danger/20 hover:bg-danger/30 border border-danger/40 text-danger flex items-center gap-2 transition-all"
+                            >
+                                <Trash2 className="w-4 h-4" /> Delete
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+        </div>
+    );
+}

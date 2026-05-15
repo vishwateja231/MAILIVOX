@@ -1,0 +1,223 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Custom Properties (Theme Tokens) ────────────────────────────── */
+:root {
+  --bg-primary: #0F172A;
+  --bg-secondary: #1E293B;
+  --bg-hover: rgba(56, 189, 248, 0.06);
+  --bg-selected: rgba(56, 189, 248, 0.1);
+  --bg-row-alt: rgba(255, 255, 255, 0.015);
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --border-hover: rgba(56, 189, 248, 0.2);
+  --accent-blue: #38BDF8;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+}
+
+/* ─── Base Layer ──────────────────────────────────────────────────────── */
+@layer base {
+  body {
+    @apply bg-background text-white antialiased min-h-screen overflow-x-hidden;
+    background-image:
+      radial-gradient(circle at 15% 50%, rgba(56, 189, 248, 0.04), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.04), transparent 25%);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  ::selection {
+    background-color: rgba(56, 189, 248, 0.3);
+  }
+
+  /* Checkbox styling */
+  input[type="checkbox"] {
+    @apply appearance-none w-4 h-4 rounded border border-white/20 bg-black/40 cursor-pointer transition-all;
+  }
+  input[type="checkbox"]:checked {
+    @apply bg-primary border-primary;
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+  }
+  input[type="checkbox"]:hover {
+    @apply border-primary/50;
+  }
+}
+
+/* ─── Component Layer ─────────────────────────────────────────────────── */
+@layer components {
+  .glass {
+    @apply bg-surface/30 backdrop-blur-xl border border-white/5;
+    box-shadow: 0 4px 24px -8px rgba(0, 0, 0, 0.5);
+  }
+
+  .glass-card {
+    @apply glass rounded-2xl transition-all duration-300;
+  }
+
+  .glass-card:hover {
+    box-shadow: 0 8px 32px -8px rgba(56, 189, 248, 0.12);
+    @apply border-white/10 bg-surface/40;
+  }
+
+  .glass-panel {
+    @apply bg-background/60 backdrop-blur-xl border border-white/10;
+  }
+
+  .input-glowing {
+    @apply bg-surface/40 backdrop-blur-md border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-300;
+  }
+
+  .btn-primary {
+    @apply relative overflow-hidden text-white px-6 py-2.5 rounded-xl font-semibold transition-all duration-300;
+    @apply active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10;
+    background: linear-gradient(to right, #38BDF8, #2563EB);
+    box-shadow: 0 0 20px -5px rgba(56, 189, 248, 0.5);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(to right, #60a5fa, #3b82f6);
+    box-shadow: 0 0 30px -5px rgba(56, 189, 248, 0.8);
+  }
+
+  .btn-secondary {
+    @apply bg-surface/50 text-gray-300 border border-white/10 px-5 py-2.5 rounded-xl font-medium transition-all duration-300;
+    @apply hover:bg-white/10 hover:text-white active:scale-95;
+    @apply disabled:opacity-40 disabled:cursor-not-allowed backdrop-blur-md;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium tracking-wide backdrop-blur-md;
+  }
+
+  /* ─── CRM Table System ─────────────────────────────────────────────── */
+  .crm-table {
+    @apply w-full text-sm;
+  }
+
+  .crm-table thead {
+    @apply sticky top-0 z-10;
+  }
+
+  .crm-table thead tr {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .crm-table thead th {
+    @apply px-4 py-3 text-left text-[11px] uppercase tracking-wider font-semibold;
+    color: var(--text-muted);
+  }
+
+  .crm-table tbody tr {
+    border-bottom: 1px solid var(--border-soft);
+    transition: background-color 0.15s ease;
+  }
+
+  .crm-table tbody tr:nth-child(even) {
+    background: var(--bg-row-alt);
+  }
+
+  .crm-table tbody tr:hover {
+    background: var(--bg-hover);
+  }
+
+  .crm-table tbody tr.selected {
+    background: var(--bg-selected);
+  }
+
+  .crm-table tbody td {
+    @apply px-4 py-3;
+    color: var(--text-primary);
+  }
+}
+
+/* ─── Utilities Layer ─────────────────────────────────────────────────── */
+@layer utilities {
+  .animation-delay-2000 {
+    animation-delay: 2s;
+  }
+  .animation-delay-4000 {
+    animation-delay: 4s;
+  }
+}
+
+/* ─── Grid Background ─────────────────────────────────────────────────── */
+.bg-grid-pattern {
+  background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  -webkit-mask-image: radial-gradient(circle at center, black, transparent 80%);
+  mask-image: radial-gradient(circle at center, black, transparent 80%);
+}
+
+/* ─── Scrollbar ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ─── Global Select/Dropdown Dark Theme ────────────────────────────────── */
+select {
+  background-color: var(--bg-primary) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-soft) !important;
+}
+
+select option {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 8px 12px;
+}
+
+select:focus {
+  border-color: var(--accent-blue) !important;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}
+
+/* ─── Ant Design Dark Theme Overrides (for pages still using AntD) ────── */
+.ant-table-wrapper .ant-table {
+  background: transparent !important;
+  color: white !important;
+}
+.ant-table-wrapper .ant-table-thead > tr > th {
+  background: var(--bg-secondary) !important;
+  color: var(--text-muted) !important;
+  border-bottom: 1px solid var(--border-soft) !important;
+}
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--border-soft) !important;
+  color: var(--text-primary) !important;
+}
+.ant-table-wrapper .ant-table-tbody > tr:hover > td {
+  background: var(--bg-hover) !important;
+}
+.ant-table-wrapper .ant-table-tbody > tr.ant-table-row-selected > td {
+  background: var(--bg-selected) !important;
+}
+.ant-pagination-item a {
+  color: white !important;
+}
+.ant-pagination-item-active {
+  background: rgba(56, 189, 248, 0.2) !important;
+  border-color: #38bdf8 !important;
+}
+.ant-select-selector {
+  background-color: var(--bg-secondary) !important;
+  border-color: var(--border-soft) !important;
+  color: white !important;
+}
+.ant-select-dropdown {
+  background-color: var(--bg-secondary) !important;
+}
+.ant-select-item {
+  color: white !important;
+}
+.ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+  background-color: var(--bg-hover) !important;
+}
