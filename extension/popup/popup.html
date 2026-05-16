@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mailivox</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand-mark">M</div>
+      <div>
+        <h1>MAILIVOX</h1>
+        <p id="pageLabel">LinkedIn extractor</p>
+      </div>
+      <button id="optionsBtn" class="icon-btn" title="Settings" aria-label="Settings">...</button>
+    </header>
+
+    <section class="status-row">
+      <span id="connectionDot" class="dot"></span>
+      <span id="connectionText">Checking backend...</span>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Quick Extract</h2>
+          <p>Visible LinkedIn profiles</p>
+        </div>
+        <strong id="profileCount">0</strong>
+      </div>
+      <button id="quickBtn" class="primary">Extract & Queue</button>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Deep Extract</h2>
+          <p>1st-degree connection emails</p>
+        </div>
+        <strong id="connectionCount">0</strong>
+      </div>
+      <button id="deepBtn" class="secondary">Extract Emails</button>
+    </section>
+
+    <section class="progress">
+      <div class="progress-meta">
+        <span id="progressLabel">Idle</span>
+        <span id="progressNumbers">0/0</span>
+      </div>
+      <div class="bar"><span id="progressBar"></span></div>
+      <div class="progress-meta muted">
+        <span id="emailsFound">Emails found: 0</span>
+        <button id="stopBtn" class="link" disabled>Stop</button>
+      </div>
+    </section>
+
+    <p id="message" class="message"></p>
+
+    <footer>
+      <button id="dashboardBtn" class="footer-link">Open Dashboard</button>
+    </footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

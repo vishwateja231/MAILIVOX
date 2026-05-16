@@ -38,6 +38,251 @@ router.get('/extension/ping', (_req, res) => {
     res.json({ ok: true, service: 'nexuscrm-backend', ts: Date.now() });
 });
 
+function normalizeEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function deriveName(contact) {
+    const supplied = String(contact.fullName || contact.name || '').trim();
+    if (supplied) return supplied;
+
+    const email = normalizeEmail(contact.email);
+    const local = email.split('@')[0] || 'LinkedIn Contact';
+    return local
+        .replace(/[._-]+/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ') || 'LinkedIn Contact';
+}
+
+function companyNameFromDomain(domain) {
+    const label = String(domain || '').split('.')[0] || 'Unknown Company';
+    return label
+        .replace(/[._-]+/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+}
+
+// POST /api/extension/batch
+// Direct import for LinkedIn connection emails. These emails came from
+// LinkedIn contact info, so they are stored as verified provided emails.
+router.post('/extension/batch', async (req, res) => {
+    const { contacts, sessionName } = req.body || {};
+
+    if (!Array.isArray(contacts)) {
+        return res.status(400).json({ error: 'contacts must be an array' });
+    }
+
+    const clean = contacts
+        .map(contact => ({ ...contact, email: normalizeEmail(contact.email) }))
+        .filter(contact => contact.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email));
+
+    const resolvedSessionName = String(sessionName || `linkedin_emails_${Date.now()}`).trim();
+
+    try {
+        const session = await prisma.session.upsert({
+            where: { sessionName: resolvedSessionName },
+            update: {},
+            create: {
+                sessionName: resolvedSessionName,
+                totalProfiles: 0,
+                totalEmails: 0,
+                totalVerified: 0,
+                rawInput: JSON.stringify({ source: 'chrome_extension_deep_extract' }),
+            },
+        });
+
+        broadcast('extension:batch_start', {
+            mode: 2,
+            sessionId: session.id,
+            sessionName: resolvedSessionName,
+            total: clean.length,
+        });
+
+        let processed = 0;
+        let skipped = contacts.length - clean.length;
+        let totalVerified = 0;
+        let newLeads = 0;
+        let newCompanies = 0;
+        const seenEmails = new Set();
+
+        for (const contact of clean) {
+            if (seenEmails.has(contact.email)) {
+                skipped++;
+                continue;
+            }
+            seenEmails.add(contact.email);
+
+            const fullName = deriveName(contact);
+            const parsed = parseName(fullName);
+            const domain = contact.email.split('@')[1];
+            const companyName = String(contact.company || '').trim() || companyNameFromDomain(domain);
+            const role = contact.role ? String(contact.role).trim() : null;
+            const location = contact.location ? String(contact.location).trim() : null;
+            const linkedinUrl = contact.linkedinUrl || null;
+
+            broadcast('extension:profile_start', {
+                mode: 2,
+                sessionId: session.id,
+                fullName,
+                email: contact.email,
+            });
+
+            try {
+                const existingCompany = await prisma.company.findUnique({ where: { domain } });
+                const company = await prisma.company.upsert({
+                    where: { domain },
+                    update: {
+                        companyName: companyName || undefined,
+                    },
+                    create: {
+                        companyName,
+                        domain,
+                    },
+                });
+                if (!existingCompany) newCompanies++;
+
+                const existingLead = await prisma.lead.findUnique({
+                    where: { fullName_companyId: { fullName, companyId: company.id } },
+                });
+
+                const lead = await prisma.lead.upsert({
+                    where: { fullName_companyId: { fullName, companyId: company.id } },
+                    update: {
+                        role: role || undefined,
+                        location: location || undefined,
+                        linkedinUrl: linkedinUrl || undefined,
+                    },
+                    create: {
+                        fullName,
+                        firstName: contact.firstName || parsed.first || fullName.split(/\s+/)[0].toLowerCase(),
+                        middleNames: contact.middleNames || parsed.middle || null,
+                        lastName: contact.lastName || parsed.last || '',
+                        role,
+                        location,
+                        linkedinUrl,
+                        sessionId: session.id,
+                        companyId: company.id,
+                    },
+                });
+                if (!existingLead) newLeads++;
+
+                await prisma.generatedEmail.updateMany({
+                    where: { leadId: lead.id },
+                    data: { isPrimary: false },
+                });
+
+                await prisma.generatedEmail.upsert({
+                    where: { email: contact.email },
+                    update: {
+                        leadId: lead.id,
+                        pattern: 'LINKEDIN_CONTACT_INFO',
+                        confidence: 'HIGH',
+                        verificationStatus: 'VALID',
+                        isVerified: true,
+                        isPrimary: true,
+                        smtpResult: 'VERIFIED',
+                        validationReason: 'Imported from LinkedIn contact info',
+                        validatedAt: new Date(),
+                    },
+                    create: {
+                        leadId: lead.id,
+                        email: contact.email,
+                        pattern: 'LINKEDIN_CONTACT_INFO',
+                        confidence: 'HIGH',
+                        verificationStatus: 'VALID',
+                        isVerified: true,
+                        isPrimary: true,
+                        smtpResult: 'VERIFIED',
+                        validationReason: 'Imported from LinkedIn contact info',
+                        validatedAt: new Date(),
+                    },
+                });
+
+                await prisma.leadStatus.upsert({
+                    where: { leadId: lead.id },
+                    update: { stage: 'VERIFIED' },
+                    create: { leadId: lead.id, stage: 'VERIFIED' },
+                });
+
+                processed++;
+                totalVerified++;
+
+                broadcast('extension:profile_done', {
+                    mode: 2,
+                    sessionId: session.id,
+                    leadId: lead.id,
+                    fullName,
+                    company: company.companyName,
+                    email: contact.email,
+                    verificationStatus: 'VALID',
+                });
+
+                broadcast('extension:batch_progress', {
+                    mode: 2,
+                    sessionId: session.id,
+                    processed,
+                    total: clean.length,
+                    emailsFound: totalVerified,
+                });
+            } catch (err) {
+                skipped++;
+                broadcast('extension:profile_error', {
+                    mode: 2,
+                    sessionId: session.id,
+                    fullName,
+                    email: contact.email,
+                    error: err.message,
+                });
+                await logger.error(`Extension direct import failed: ${contact.email} - ${err.message}`, session.id);
+            }
+        }
+
+        const [leadCount, emailCount, verifiedCount] = await Promise.all([
+            prisma.lead.count({ where: { sessionId: session.id } }),
+            prisma.generatedEmail.count({ where: { lead: { sessionId: session.id } } }),
+            prisma.generatedEmail.count({
+                where: { lead: { sessionId: session.id }, verificationStatus: 'VALID' },
+            }),
+        ]);
+
+        await prisma.session.update({
+            where: { id: session.id },
+            data: {
+                totalProfiles: leadCount,
+                totalEmails: emailCount,
+                totalVerified: verifiedCount,
+            },
+        }).catch(() => {});
+
+        const summary = {
+            ok: true,
+            sessionId: session.id,
+            sessionName: resolvedSessionName,
+            totalReceived: contacts.length,
+            totalProcessed: processed,
+            totalSkipped: skipped,
+            totalVerified,
+            newLeads,
+            newCompanies,
+        };
+
+        broadcast('extension:batch_complete', summary);
+        await logger.success(
+            `Extension direct import complete: ${processed}/${contacts.length} contacts, ${totalVerified} verified emails.`,
+            session.id,
+        );
+
+        res.json(summary);
+    } catch (err) {
+        console.error('[POST /api/extension/batch] fatal:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // GET /api/events/stream  — Server-Sent Events
 // ═══════════════════════════════════════════════════════════════════════════════
