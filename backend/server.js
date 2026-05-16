@@ -21,7 +21,15 @@ const PORT = process.env.PORT || 3000;
 
 // ─── Security ──────────────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-app.use(cors());
+app.use(cors({
+    origin: [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'https://mailivox.vercel.app',
+        process.env.FRONTEND_URL,
+    ].filter(Boolean),
+    credentials: true,
+}));
 app.use(express.json({ limit: '10mb' }));
 
 // ─── Auth Routes (before rate limiter) ─────────────────────────────────────────
@@ -72,13 +80,14 @@ app.listen(PORT, () => {
     console.log(`   Mail:     Resend (${process.env.MAIL_FROM || 'not configured'})`);
     console.log(`   Queue:    Delivery queue ready\n`);
 
-    // Auto-start processors
-    emailQueue.start();
-    startFollowUpProcessor();
+    // Auto-start processors (non-blocking, won't crash the server)
+    try { emailQueue.start(); } catch (e) { console.error('[queue] Failed to start:', e.message); }
+    try { startFollowUpProcessor(); } catch (e) { console.error('[followup] Failed to start:', e.message); }
 
-    // Start the validation queue (processes emails in parallel as they arrive)
-    const { enqueueAllPending } = require('./services/validation/validationQueue');
-    setImmediate(() => enqueueAllPending());
+    try {
+        const { enqueueAllPending } = require('./services/validation/validationQueue');
+        setImmediate(() => enqueueAllPending().catch(e => console.error('[validation] Failed:', e.message)));
+    } catch (e) { console.error('[validation] Failed to load:', e.message); }
 });
 
 // Validation is now handled by the validationQueue service
