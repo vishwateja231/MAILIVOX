@@ -51,7 +51,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ started: false, error: 'Extraction already running' });
       return false;
     }
-    handleMode2(msg.connectionUrls || []);
+    handleMode2(msg.connectionUrls || [], msg.connectionProfiles || []);
     sendResponse({ started: true });
     return false;
   }
@@ -185,11 +185,22 @@ function cleanBlockLine(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
-async function handleMode2(connectionUrls) {
+async function handleMode2(connectionUrls, connectionProfiles = []) {
   extractionState = freshState(2, connectionUrls.length);
   notify('progressUpdate');
 
   const results = [];
+  
+  // Build a map: URL → company info from search results
+  // This is the AUTHORITATIVE source of company data — much more reliable
+  // than re-scraping each profile page in a background tab.
+  const profileMap = new Map();
+  for (const p of connectionProfiles) {
+    if (p?.linkedinUrl) profileMap.set(p.linkedinUrl, p);
+  }
+  
+  // Create the session UPFRONT so it appears in the dashboard immediately
+  const sessionName = `Chrome Deep Extract ${new Date().toLocaleString()}`;
 
   try {
     if (!Array.isArray(connectionUrls) || connectionUrls.length === 0) {
@@ -199,6 +210,18 @@ async function handleMode2(connectionUrls) {
     const settings = await chrome.storage.local.get(['minDelayMs', 'maxDelayMs']);
     const minDelayMs = Number(settings.minDelayMs || 2500);
     const maxDelayMs = Math.max(Number(settings.maxDelayMs || 5500), minDelayMs);
+
+    // Initialize empty session immediately so frontend sees activity
+    try {
+      await apiJson('/api/extension/batch', 'POST', {
+        contacts: [],
+        sessionName,
+        totalAttempted: connectionUrls.length,
+        note: 'Deep extract started'
+      });
+    } catch (e) {
+      console.warn('[mailivox] Initial session create failed:', e.message);
+    }
 
     for (const rawUrl of connectionUrls) {
       if (!extractionState.running) break;
@@ -218,14 +241,32 @@ async function handleMode2(connectionUrls) {
 
         const contactInfo = await sendTabMessage(tab.id, { action: 'extractContactInfo' });
         if (contactInfo?.email) {
+          // Merge: prefer company from SEARCH RESULTS (more reliable) over profile page
+          const searchData = profileMap.get(url) || {};
           const item = {
             ...contactInfo,
+            // Search results company is more reliable than profile-page extraction
+            company: searchData.company || contactInfo.company || '',
+            role: searchData.role || contactInfo.role || '',
+            fullName: contactInfo.fullName || searchData.fullName || '',
             linkedinUrl: url
           };
           results.push(item);
           extractionState.results = results;
           extractionState.progress.emailsFound = results.length;
+
+          // STREAM to backend immediately — don't wait for full batch
+          try {
+            await apiJson('/api/extension/batch', 'POST', {
+              contacts: [item],
+              sessionName,
+              streaming: true
+            });
+          } catch (e) {
+            console.warn('[mailivox] Stream push failed:', e.message);
+          }
         }
+        // Skip silently if no email
       } catch (err) {
         extractionState.error = err.message;
       } finally {
@@ -242,12 +283,13 @@ async function handleMode2(connectionUrls) {
       await sleep(delay);
     }
 
-    if (results.length > 0) {
-      extractionState.summary = await apiJson('/api/extension/batch', 'POST', {
-        contacts: results,
-        sessionName: `Chrome Deep Extract ${new Date().toLocaleString()}`
-      });
-    }
+    // Final summary call
+    extractionState.summary = {
+      sessionName,
+      totalAttempted: connectionUrls.length,
+      emailsFound: results.length,
+      streamed: true
+    };
   } catch (err) {
     extractionState.error = err.message;
   } finally {
@@ -271,8 +313,13 @@ function freshState(mode, total) {
 
 async function apiJson(endpoint, method, body) {
   const { apiUrl, mailivox_token } = await chrome.storage.local.get(['apiUrl', 'mailivox_token']);
+  
+  if (!mailivox_token) {
+    throw new Error('Not authenticated. Please log in at the dashboard first, then reload the extension.');
+  }
+  
   const headers = { 'Content-Type': 'application/json' };
-  if (mailivox_token) headers.Authorization = `Bearer ${mailivox_token}`;
+  headers.Authorization = `Bearer ${mailivox_token}`;
 
   const res = await fetch(`${apiUrl || DEFAULT_API_URL}${endpoint}`, {
     method,
@@ -281,14 +328,24 @@ async function apiJson(endpoint, method, body) {
   });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed with HTTP ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error('Authentication expired. Please log in at the dashboard again.');
+    }
+    throw new Error(data.error || `Request failed with HTTP ${res.status}`);
+  }
   return data;
 }
 
 async function apiEventStream(endpoint, method, body, onEvent) {
   const { apiUrl, mailivox_token } = await chrome.storage.local.get(['apiUrl', 'mailivox_token']);
+  
+  if (!mailivox_token) {
+    throw new Error('Not authenticated. Please log in at the dashboard first, then reload the extension.');
+  }
+  
   const headers = { 'Content-Type': 'application/json' };
-  if (mailivox_token) headers.Authorization = `Bearer ${mailivox_token}`;
+  headers.Authorization = `Bearer ${mailivox_token}`;
 
   const res = await fetch(`${apiUrl || DEFAULT_API_URL}${endpoint}`, {
     method,
@@ -298,6 +355,9 @@ async function apiEventStream(endpoint, method, body, onEvent) {
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      throw new Error('Authentication expired. Please log in at the dashboard again.');
+    }
     throw new Error(data.error || `Request failed with HTTP ${res.status}`);
   }
 

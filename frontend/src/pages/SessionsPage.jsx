@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getSessions, deleteSession, archiveSession } from '../api';
-import { Layers, Calendar, Users, Mail, Database, ChevronRight, Trash2, Archive, RotateCcw } from 'lucide-react';
+import { getSessions, deleteSession, archiveSession, renameSession } from '../api';
+import { Layers, Calendar, Users, Mail, Database, ChevronRight, Trash2, Archive, RotateCcw, Pencil, Check, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import clsx from 'clsx';
@@ -10,8 +10,10 @@ export default function SessionsPage() {
     const navigate = useNavigate();
     const [sessions, setSessions] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [tab, setTab] = useState('active'); // active | archived
+    const [tab, setTab] = useState('active');
     const [deleteTarget, setDeleteTarget] = useState(null);
+    const [editingId, setEditingId] = useState(null);
+    const [editValue, setEditValue] = useState('');
 
     const load = () => {
         setLoading(true);
@@ -21,6 +23,31 @@ export default function SessionsPage() {
     };
 
     useEffect(() => { load(); }, [tab]);
+
+    const startEdit = (id, currentName) => {
+        setEditingId(id);
+        setEditValue(currentName);
+    };
+
+    const cancelEdit = () => {
+        setEditingId(null);
+        setEditValue('');
+    };
+
+    const saveEdit = async () => {
+        if (!editingId || !editValue.trim()) {
+            cancelEdit();
+            return;
+        }
+        try {
+            const res = await renameSession(editingId, editValue.trim());
+            setSessions(prev => prev.map(s => s.id === editingId ? { ...s, sessionName: res.data.sessionName } : s));
+            toast.success('Session renamed');
+            cancelEdit();
+        } catch (e) {
+            toast.error(e.response?.data?.error || 'Rename failed');
+        }
+    };
 
     const handleDelete = async () => {
         if (!deleteTarget) return;
@@ -106,15 +133,56 @@ export default function SessionsPage() {
                             )} />
                             <div className="glass-card p-6 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center hover:bg-surface/50 hover:border-primary/20 transition-all group">
                                 {/* Clickable main area */}
-                                <div
-                                    onClick={() => navigate(`/leads?sessionId=${s.id}`)}
-                                    className="flex-1 min-w-0 cursor-pointer"
-                                >
+                                <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-3 mb-2">
                                         <Layers className={clsx("w-5 h-5 shrink-0", tab === 'archived' ? 'text-amber-500' : 'text-primary')} />
-                                        <h3 className="text-lg font-bold text-white truncate group-hover:text-primary transition-colors">{s.sessionName}</h3>
-                                        {tab === 'archived' && (
-                                            <span className="text-[9px] uppercase font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">Archived</span>
+                                        {editingId === s.id ? (
+                                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                <input
+                                                    type="text"
+                                                    value={editValue}
+                                                    onChange={e => setEditValue(e.target.value)}
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter') saveEdit();
+                                                        if (e.key === 'Escape') cancelEdit();
+                                                    }}
+                                                    autoFocus
+                                                    className="flex-1 bg-background border border-primary/40 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-primary"
+                                                />
+                                                <button
+                                                    onClick={saveEdit}
+                                                    className="p-1.5 rounded-lg text-emerald-400 hover:bg-emerald-500/10"
+                                                    title="Save"
+                                                >
+                                                    <Check className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                    onClick={cancelEdit}
+                                                    className="p-1.5 rounded-lg text-gray-400 hover:bg-white/10"
+                                                    title="Cancel"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <h3
+                                                    onClick={() => navigate(`/leads?sessionId=${s.id}`)}
+                                                    className="text-lg font-bold text-white truncate hover:text-primary transition-colors cursor-pointer"
+                                                >
+                                                    {s.sessionName}
+                                                </h3>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); startEdit(s.id, s.sessionName); }}
+                                                    title="Rename session"
+                                                    className="p-1 rounded text-gray-500 hover:text-primary hover:bg-primary/10 opacity-0 group-hover:opacity-100 transition-all"
+                                                >
+                                                    <Pencil className="w-3.5 h-3.5" />
+                                                </button>
+                                                {tab === 'archived' && (
+                                                    <span className="text-[9px] uppercase font-semibold px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">Archived</span>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                     <p className="text-sm text-gray-500 flex items-center gap-2">

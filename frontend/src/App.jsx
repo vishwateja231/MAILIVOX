@@ -94,9 +94,7 @@ function Sidebar({ collapsed, setCollapsed }) {
             {/* Logo Area */}
             <div className="h-16 flex items-center justify-between px-4 border-b border-white/5">
                 <div className="flex items-center gap-3 overflow-hidden whitespace-nowrap">
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-indigo-500 flex items-center justify-center shadow-[0_0_15px_rgba(56,189,248,0.4)] shrink-0">
-                        <Send className="w-4 h-4 text-white" />
-                    </div>
+                    <img src="/favicon.png" alt="Mailivox" className="w-8 h-8 rounded-lg shrink-0" />
                     {!collapsed && (
                         <span className="font-bold tracking-wide text-sm">
                             MAILI<span className="text-primary">VOX</span>

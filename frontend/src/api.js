@@ -89,6 +89,7 @@ export const getSessions = (params) => axios.get(`${API}/api/sessions`, { params
 export const getSession = (id) => axios.get(`${API}/api/sessions/${id}`);
 export const deleteSession = (id) => axios.delete(`${API}/api/sessions/${id}`);
 export const archiveSession = (id, isArchived = true) => axios.patch(`${API}/api/sessions/${id}/archive`, { isArchived });
+export const renameSession = (id, sessionName) => axios.patch(`${API}/api/sessions/${id}`, { sessionName });
 
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 export const getLogs = (params) => axios.get(`${API}/api/logs`, { params });
@@ -152,6 +153,7 @@ export function processBulkStream(profiles, onEvent, verify = false, sessionName
 // ─── Extension / Realtime ─────────────────────────────────────────────────────
 export const pingExtensionBackend = () => axios.get(`${API}/api/extension/ping`);
 export const processExtensionLeads = (payload) => axios.post(`${API}/api/leads/process`, payload);
+export const stopAllExtensionActivity = () => axios.post(`${API}/api/extension/stop-all`);
 export const getEventsStreamUrl = () => `${API}/api/events/stream`;
 
 // ─── Outreach / Campaigns ─────────────────────────────────────────────────────

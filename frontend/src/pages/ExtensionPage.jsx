@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, CheckCircle2, ChevronDown, Copy, ExternalLink, Mail, RefreshCw, TerminalSquare, Users, Zap, ShieldCheck, Puzzle, Inbox } from 'lucide-react';
+import { Activity, CheckCircle2, ChevronDown, Copy, ExternalLink, Mail, RefreshCw, TerminalSquare, Users, Zap, ShieldCheck, Puzzle, Inbox, OctagonX } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import clsx from 'clsx';
-import { getLeads, getSessions, pingExtensionBackend } from '../api';
+import { getLeads, getSessions, pingExtensionBackend, stopAllExtensionActivity } from '../api';
 import { useRealtimeEvents } from '../hooks/useRealtimeEvents';
 
 const MODES = {
@@ -58,7 +58,7 @@ function eventMessage(event) {
 
 function isExtensionSession(session) {
     const name = (session?.sessionName || '').toLowerCase();
-    return name.includes('chrome') || name.includes('extension') || name.includes('linkedin');
+    return name.includes('chrome') || name.includes('extension') || name.includes('linkedin') || name.includes('quick extract') || name.includes('deep extract');
 }
 
 export default function ExtensionPage() {
@@ -99,6 +99,11 @@ export default function ExtensionPage() {
     useEffect(() => {
         loadSessions();
         checkHealth();
+        // Auto-refresh sessions every 5s to catch new extractions quickly
+        const interval = setInterval(() => {
+            loadSessions();
+        }, 5000);
+        return () => clearInterval(interval);
     }, [loadSessions, checkHealth]);
 
     const loadLeads = useCallback(async () => {
@@ -135,11 +140,14 @@ export default function ExtensionPage() {
             ...prev,
         ].slice(0, 80));
 
-        if (
-            event.type === 'pipeline:complete' ||
-            event.type === 'extension:batch_complete' ||
-            event.type === 'extension:profile_done'
-        ) {
+        // Auto-switch to the active mode based on incoming events (so user sees activity)
+        if (event.type === 'extension:batch_start' || event.type === 'extension:profile_start') {
+            setActiveMode(mode);
+            setFeedOpen(true); // auto-open live feed when activity starts
+        }
+
+        // Refresh on ANY extension event so UI updates instantly
+        if (event.type?.startsWith('extension:') || event.type?.startsWith('pipeline:')) {
             loadSessions();
             loadLeads();
         }
@@ -197,6 +205,24 @@ export default function ExtensionPage() {
                 <div className="flex items-center gap-2">
                     <StatusPill label={connected ? 'Live feed' : 'Feed offline'} ok={connected} />
                     <StatusPill label={health === 'ok' ? 'Backend online' : health === 'checking' ? 'Checking' : 'Backend down'} ok={health === 'ok'} />
+                    <button
+                        onClick={async () => {
+                            if (!confirm('Stop all extension activity and validation? This will cancel pending validations.')) return;
+                            try {
+                                const res = await stopAllExtensionActivity();
+                                toast.success(res.data.message || 'All activity stopped');
+                                loadSessions();
+                                loadLeads();
+                            } catch {
+                                toast.error('Failed to stop activity');
+                            }
+                        }}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-all"
+                        title="Stop all extension and validation activity"
+                    >
+                        <OctagonX className="w-4 h-4" />
+                        Stop All
+                    </button>
                     <button onClick={() => { loadSessions(); loadLeads(); checkHealth(); }} className="btn-primary p-2.5 rounded-xl" title="Refresh">
                         <RefreshCw className={clsx('w-4 h-4', loading && 'animate-spin')} />
                     </button>
@@ -463,7 +489,9 @@ function LeadRow({ lead, mode }) {
             </div>
             <div className="min-w-0">
                 <p className="text-sm text-primary truncate">{lead.company?.companyName || 'Unknown'}</p>
-                <p className="text-[11px] text-gray-500 truncate">{lead.company?.domain || ''}</p>
+                {lead.company?.domain && !lead.company.domain.startsWith('linkedin-') && !lead.company.domain.startsWith('personal-') && (
+                    <p className="text-[11px] text-gray-500 truncate">{lead.company.domain}</p>
+                )}
             </div>
             <div className="space-y-1.5 min-w-0">
                 {emails.length === 0 ? (

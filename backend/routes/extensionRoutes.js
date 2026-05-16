@@ -32,6 +32,20 @@ const logger = require('../services/logger/logger');
 const { bus, broadcast } = require('../services/eventBus');
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// POST /api/extension/stop-all — Globally stop all extension/validation activity
+// ═══════════════════════════════════════════════════════════════════════════════
+router.post('/extension/stop-all', async (_req, res) => {
+    try {
+        const { clearQueue } = require('../services/validation/validationQueue');
+        const cleared = clearQueue();
+        broadcast('extension:global_stop', { cleared, ts: Date.now() });
+        res.json({ ok: true, cleared, message: `Stopped all activity. Cleared ${cleared} pending validations.` });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // GET /api/extension/ping
 // ═══════════════════════════════════════════════════════════════════════════════
 router.get('/extension/ping', (_req, res) => {
@@ -64,6 +78,26 @@ function companyNameFromDomain(domain) {
         .filter(Boolean)
         .map(part => part.charAt(0).toUpperCase() + part.slice(1))
         .join(' ');
+}
+
+// Personal email providers — when these are detected, we should NOT treat
+// the email domain as the company. Use the LinkedIn-extracted company instead.
+const PERSONAL_EMAIL_PROVIDERS = new Set([
+    'gmail.com', 'googlemail.com',
+    'yahoo.com', 'yahoo.co.in', 'yahoo.co.uk', 'ymail.com', 'rocketmail.com',
+    'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'outlook.in',
+    'icloud.com', 'me.com', 'mac.com',
+    'protonmail.com', 'proton.me', 'pm.me',
+    'aol.com', 'aim.com',
+    'mail.com', 'gmx.com', 'gmx.net', 'fastmail.com', 'tutanota.com',
+    'rediffmail.com', 'rediff.com',
+    'zoho.com', 'zohomail.com',
+    'qq.com', '163.com', '126.com', 'sina.com',
+    'yandex.com', 'yandex.ru',
+]);
+
+function isPersonalEmail(domain) {
+    return PERSONAL_EMAIL_PROVIDERS.has(String(domain || '').toLowerCase());
 }
 
 // POST /api/extension/batch
@@ -118,8 +152,32 @@ router.post('/extension/batch', async (req, res) => {
 
             const fullName = deriveName(contact);
             const parsed = parseName(fullName);
-            const domain = contact.email.split('@')[1];
-            const companyName = String(contact.company || '').trim() || companyNameFromDomain(domain);
+            const emailDomain = contact.email.split('@')[1];
+            const isPersonal = isPersonalEmail(emailDomain);
+            const linkedInCompany = String(contact.company || '').trim();
+            
+            // Determine company name and DB key:
+            // - If LinkedIn gave us a real company, use it
+            // - If email is personal (Gmail/Yahoo/etc), DON'T use email domain as company
+            // - Fall back to email domain only when we have nothing else (corporate email)
+            let companyName = linkedInCompany;
+            let companyKey = emailDomain; // Domain used as the unique key for the Company record
+            
+            if (!companyName) {
+                if (isPersonal) {
+                    companyName = 'Unknown Company';
+                    // For personal emails without LinkedIn company, use a synthetic key
+                    // so each lead gets isolated rather than all "Gmail" leads sharing one company
+                    companyKey = `personal-${contact.email}`;
+                } else {
+                    companyName = companyNameFromDomain(emailDomain);
+                }
+            } else if (isPersonal) {
+                // We have LinkedIn company name + personal email
+                // Use the LinkedIn company name with a normalized key based on it
+                companyKey = `linkedin-${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+            }
+            
             const role = contact.role ? String(contact.role).trim() : null;
             const location = contact.location ? String(contact.location).trim() : null;
             const linkedinUrl = contact.linkedinUrl || null;
@@ -132,15 +190,15 @@ router.post('/extension/batch', async (req, res) => {
             });
 
             try {
-                const existingCompany = await prisma.company.findUnique({ where: { domain } });
+                const existingCompany = await prisma.company.findUnique({ where: { domain: companyKey } });
                 const company = await prisma.company.upsert({
-                    where: { domain },
+                    where: { domain: companyKey },
                     update: {
                         companyName: companyName || undefined,
                     },
                     create: {
                         companyName,
-                        domain,
+                        domain: companyKey,
                     },
                 });
                 if (!existingCompany) newCompanies++;

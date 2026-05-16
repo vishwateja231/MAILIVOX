@@ -30,6 +30,16 @@ let totalInvalid = 0;
 const CONCURRENCY = 3;
 const DELAY_BETWEEN_MS = 300;        // 300ms between batches (respect API rate limits)
 
+// Early-stop logic: stop validating a lead's remaining emails once we have enough valid ones
+// Saves credits when many patterns are generated per lead (e.g., 18 patterns → stop after 2-3 valid)
+const MAX_VALID_PER_LEAD = 3;        // Stop after acquiring this many valid emails for a lead
+const MIN_VALID_FOR_FEW = 1;         // If lead has very few patterns (≤5), stop after just 1 valid
+const FEW_PATTERNS_THRESHOLD = 5;    // What counts as "few patterns" per lead
+
+// Track how many valid emails we've found per lead in this run
+const leadValidCount = new Map();    // leadId → count of valid emails found
+const leadTotalGenerated = new Map(); // leadId → total emails generated
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -53,9 +63,18 @@ async function enqueueLeadEmails(leadId) {
     try {
         const emails = await prisma.generatedEmail.findMany({
             where: { leadId, verificationStatus: { in: ['PENDING', 'UNVERIFIED'] } },
-            select: { id: true, email: true, pattern: true, leadId: true },
+            select: { id: true, email: true, pattern: true, leadId: true, confidence: true },
+            orderBy: { confidence: 'asc' }, // HIGH first (alphabetically: HIGH < LOW < MEDIUM, fix below)
         });
         if (emails.length > 0) {
+            // Sort by confidence (HIGH > MEDIUM > LOW > INVALID) so we validate the best first
+            const confidenceOrder = { HIGH: 0, MEDIUM: 1, LOW: 2, INVALID: 3 };
+            emails.sort((a, b) => (confidenceOrder[a.confidence] ?? 9) - (confidenceOrder[b.confidence] ?? 9));
+            
+            // Track total generated for early-stop logic
+            leadTotalGenerated.set(leadId, emails.length);
+            leadValidCount.set(leadId, 0);
+            
             enqueue(emails.map(e => ({ emailId: e.id, email: e.email, pattern: e.pattern, tier: 'A', leadId: e.leadId })));
         }
     } catch (e) {
@@ -98,6 +117,19 @@ function getStats() {
     };
 }
 
+/**
+ * Globally stop and clear all pending validations.
+ * Returns the number of items that were queued.
+ */
+function clearQueue() {
+    const cleared = queue.length;
+    queue = [];
+    leadValidCount.clear();
+    leadTotalGenerated.clear();
+    console.log(`[validationQueue] Globally cleared ${cleared} pending validations`);
+    return cleared;
+}
+
 // ─── Domain Status Cache (skip domains where all emails are invalid) ─────────
 const domainStatus = new Map(); // domain → { valid: 0, invalid: 0, checked: boolean }
 
@@ -132,6 +164,10 @@ async function processQueue() {
     isProcessing = false;
     console.log('[validationQueue] Done: ' + totalProcessed + ' processed, ' + totalValid + ' valid, ' + totalInvalid + ' invalid');
 
+    // Clean up per-lead tracking after each batch run (saves memory)
+    leadValidCount.clear();
+    leadTotalGenerated.clear();
+
     // Check for more pending emails every 30 seconds
     setTimeout(async () => {
         const count = await prisma.generatedEmail.count({
@@ -144,13 +180,33 @@ async function processQueue() {
 }
 
 async function validateOne(item) {
-    const { emailId, email, pattern, tier } = item;
+    const { emailId, email, pattern, tier, leadId } = item;
 
     try {
+        // ─── Early-stop check: if this lead already has enough valid emails, skip ───
+        if (leadId) {
+            const validCount = leadValidCount.get(leadId) || 0;
+            const totalGenerated = leadTotalGenerated.get(leadId) || 0;
+            
+            // If we have few patterns total, stop after MIN_VALID_FOR_FEW
+            // If we have many patterns, stop after MAX_VALID_PER_LEAD
+            const threshold = totalGenerated <= FEW_PATTERNS_THRESHOLD ? MIN_VALID_FOR_FEW : MAX_VALID_PER_LEAD;
+            
+            if (validCount >= threshold) {
+                // Already have enough valid emails for this lead — skip without using credits
+                await updateEmailStatus(emailId, 'LOW', 'PENDING', `Skipped — lead already has ${validCount} valid email(s)`);
+                
+                // Remove other emails for this lead from queue too
+                queue = queue.filter(q => q.leadId !== leadId);
+                return;
+            }
+        }
+
         // User-provided emails are trusted — skip verification
         if (pattern === 'PROVIDED_EMAIL') {
             await updateEmailStatus(emailId, 'HIGH', 'VALID', 'User-provided email');
             totalValid++;
+            if (leadId) leadValidCount.set(leadId, (leadValidCount.get(leadId) || 0) + 1);
             return;
         }
 
@@ -197,6 +253,7 @@ async function validateOne(item) {
                         dstat.valid++;
                         await updateEmailStatus(emailId, 'HIGH', 'VALID', 'Verified — mailbox exists (SMTP confirmed)');
                         totalValid++;
+                        if (leadId) leadValidCount.set(leadId, (leadValidCount.get(leadId) || 0) + 1);
                         return;
                     } else if (data.status === 'invalid') {
                         dstat.invalid++;
@@ -223,6 +280,7 @@ async function validateOne(item) {
                         if (patternScore >= 70) {
                             await updateEmailStatus(emailId, 'MEDIUM', 'VALID', 'Catch-all domain + strong pattern — likely valid');
                             totalValid++;
+                            if (leadId) leadValidCount.set(leadId, (leadValidCount.get(leadId) || 0) + 1);
                         } else {
                             await updateEmailStatus(emailId, 'LOW', 'PENDING', 'Catch-all domain — cannot confirm individual mailbox');
                         }
@@ -272,16 +330,25 @@ async function validateOne(item) {
 }
 
 async function updateEmailStatus(emailId, confidence, status, reason) {
-    await prisma.generatedEmail.update({
-        where: { id: emailId },
-        data: {
-            confidence,
-            verificationStatus: status,
-            isVerified: status === 'VALID',
-            validationReason: reason,
-            validatedAt: new Date(),
-        },
-    });
+    // Use updateMany so missing records don't throw — handles cases where the email
+    // was deleted between enqueue and validation (e.g., user cleared a session)
+    try {
+        await prisma.generatedEmail.updateMany({
+            where: { id: emailId },
+            data: {
+                confidence,
+                verificationStatus: status,
+                isVerified: status === 'VALID',
+                validationReason: reason,
+                validatedAt: new Date(),
+            },
+        });
+    } catch (e) {
+        // Log but don't crash — most common cause is record deletion mid-flight
+        if (!e.message?.includes('Record to update not found')) {
+            console.error('[validationQueue] updateEmailStatus error:', e.message);
+        }
+    }
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
@@ -291,4 +358,5 @@ module.exports = {
     enqueueLeadEmails,
     enqueueAllPending,
     getStats,
+    clearQueue,
 };

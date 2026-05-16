@@ -515,6 +515,30 @@ router.patch('/sessions/:id/archive', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Rename a session
+router.patch('/sessions/:id', async (req, res) => {
+    try {
+        const { sessionName } = req.body || {};
+        if (!sessionName || typeof sessionName !== 'string' || !sessionName.trim()) {
+            return res.status(400).json({ error: 'sessionName is required' });
+        }
+        const trimmed = sessionName.trim();
+        if (trimmed.length > 200) {
+            return res.status(400).json({ error: 'sessionName too long (max 200 chars)' });
+        }
+        // Check uniqueness
+        const existing = await prisma.session.findUnique({ where: { sessionName: trimmed } });
+        if (existing && existing.id !== req.params.id) {
+            return res.status(409).json({ error: 'A session with that name already exists' });
+        }
+        const session = await prisma.session.update({
+            where: { id: req.params.id },
+            data: { sessionName: trimmed },
+        });
+        res.json(session);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // LOGS
 // ═══════════════════════════════════════════════════════════════════════════════
