@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { GitBranch, Server, Database, Globe, Box } from 'lucide-react';
 
-const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || '#';
+const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || 'https://github.com/vishwateja231/MAILIVOX';
 
 const COMMANDS = [
     '$ git clone https://github.com/mailivox/mailivox.git',

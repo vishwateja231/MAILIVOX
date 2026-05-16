@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, BookOpen } from 'lucide-react';
 
-const DOCS_URL = import.meta.env.VITE_DOCS_URL || '/docs';
+const DOCS_URL = import.meta.env.VITE_DOCS_URL || 'https://github.com/vishwateja231/MAILIVOX#readme';
 
 const PIPELINE_NODES = [
     { id: 'linkedin', label: 'LinkedIn', x: 50, y: 140 },
@@ -102,6 +102,8 @@ export default function HeroSection({ reducedMotion }) {
                         </button>
                         <a
                             href={DOCS_URL}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="btn-secondary flex items-center gap-2"
                         >
                             <BookOpen className="w-4 h-4" />

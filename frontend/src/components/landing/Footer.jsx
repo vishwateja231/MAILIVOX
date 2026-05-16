@@ -1,7 +1,7 @@
 import { Send } from 'lucide-react';
 
-const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || '#';
-const DOCS_URL = import.meta.env.VITE_DOCS_URL || '/docs';
+const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || 'https://github.com/vishwateja231/MAILIVOX';
+const DOCS_URL = import.meta.env.VITE_DOCS_URL || 'https://github.com/vishwateja231/MAILIVOX#readme';
 
 const LINK_GROUPS = [
     {

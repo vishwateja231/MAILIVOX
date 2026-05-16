@@ -4,15 +4,15 @@ import { Send, Menu, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 
-const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || '#';
-const DOCS_URL = import.meta.env.VITE_DOCS_URL || '/docs';
+const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || 'https://github.com/vishwateja231/MAILIVOX';
+const DOCS_URL = import.meta.env.VITE_DOCS_URL || 'https://github.com/vishwateja231/MAILIVOX#readme';
 
 const NAV_LINKS = [
     { label: 'Features', href: '#features' },
     { label: 'Infrastructure', href: '#architecture' },
     { label: 'Validation Engine', href: '#smtp' },
     { label: 'Self Host', href: '#deploy' },
-    { label: 'Docs', href: DOCS_URL, external: false },
+    { label: 'Docs', href: DOCS_URL, external: true },
     { label: 'GitHub', href: GITHUB_URL, external: true },
 ];
 

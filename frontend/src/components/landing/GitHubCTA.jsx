@@ -1,8 +1,8 @@
 import { motion } from 'framer-motion';
 import { GitBranch, BookOpen, Terminal } from 'lucide-react';
 
-const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || '#';
-const DOCS_URL = import.meta.env.VITE_DOCS_URL || '/docs';
+const GITHUB_URL = import.meta.env.VITE_GITHUB_URL || 'https://github.com/vishwateja231/MAILIVOX';
+const DOCS_URL = import.meta.env.VITE_DOCS_URL || 'https://github.com/vishwateja231/MAILIVOX#readme';
 
 export default function GitHubCTA() {
     return (
@@ -49,6 +49,8 @@ export default function GitHubCTA() {
                     </a>
                     <a
                         href={DOCS_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="btn-secondary flex items-center gap-2"
                     >
                         <BookOpen className="w-4 h-4" />
