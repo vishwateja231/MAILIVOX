@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
-import { Brain, Users, BarChart3, Zap, LayoutDashboard, Building2, HardDrive, Layers, Bell, Search, Settings, PanelLeftClose, PanelLeft, Database, TerminalSquare, Send, Upload } from 'lucide-react';
+import { Brain, Users, BarChart3, Zap, LayoutDashboard, Building2, HardDrive, Layers, Bell, Search, Settings, PanelLeftClose, PanelLeft, Database, TerminalSquare, Send, Upload, LogOut } from 'lucide-react';
 import { Toaster } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
@@ -15,6 +15,12 @@ import SheetsPage from './pages/SheetsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import OutreachPage from './pages/OutreachPage';
 import ImportPage from './pages/ImportPage';
+import SettingsPage from './pages/SettingsPage';
+import LoginPage from './pages/LoginPage';
+import LandingPage from './pages/landing/LandingPage';
+
+// Auth utilities
+import { restoreSession, validateSession, clearAuth, saveAuth } from './utils/auth';
 
 // ─── Animated Background ────────────────────────────────────────────────────────
 function Background() {
@@ -116,17 +122,17 @@ function Sidebar({ collapsed, setCollapsed }) {
 
             {/* Bottom Actions */}
             <div className="p-4 border-t border-white/5">
-                <button className="flex items-center gap-3 w-full text-gray-400 hover:text-white px-3 py-2 rounded-xl hover:bg-white/5 transition-all overflow-hidden whitespace-nowrap">
+                <NavLink to="/settings" className={({ isActive }) => clsx("flex items-center gap-3 w-full px-3 py-2 rounded-xl transition-all overflow-hidden whitespace-nowrap", isActive ? "bg-primary/10 text-primary" : "text-gray-400 hover:text-white hover:bg-white/5")}>
                     <Settings className="w-5 h-5 shrink-0" />
                     {!collapsed && <span className="text-sm font-medium">Settings</span>}
-                </button>
+                </NavLink>
             </div>
         </motion.aside>
     );
 }
 
 // ─── Topbar ──────────────────────────────────────────────────────────────────
-function Topbar() {
+function Topbar({ user, onLogout }) {
     const location = useLocation();
     const title = NAV_ITEMS.flatMap(g => g.items).find(i => i.to === location.pathname)?.label || 'Overview';
 
@@ -148,14 +154,30 @@ function Topbar() {
                     <Bell className="w-5 h-5" />
                     <span className="absolute top-0 right-0 w-2 h-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(56,189,248,1)]" />
                 </button>
-                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-violet-500 to-fuchsia-500 border border-white/20 cursor-pointer shadow-lg hover:scale-105 transition-transform" />
+                {/* User info + Logout */}
+                <div className="flex items-center gap-3">
+                    <div className="hidden md:flex flex-col items-end">
+                        <span className="text-xs font-medium text-white">{user?.username}</span>
+                        <span className="text-[10px] text-gray-500 uppercase">{user?.role}</span>
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-violet-500 to-fuchsia-500 border border-white/20 cursor-pointer shadow-lg hover:scale-105 transition-transform flex items-center justify-center text-[10px] font-bold text-white">
+                        {user?.username?.charAt(0)?.toUpperCase()}
+                    </div>
+                    <button
+                        onClick={onLogout}
+                        className="p-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                        title="Logout"
+                    >
+                        <LogOut className="w-4 h-4" />
+                    </button>
+                </div>
             </div>
         </header>
     );
 }
 
 // ─── App Shell ────────────────────────────────────────────────────────────────
-function AppShell() {
+function AppShell({ user, onLogout }) {
     const [collapsed, setCollapsed] = useState(false);
 
     return (
@@ -163,7 +185,7 @@ function AppShell() {
             <Background />
             <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
             <div className="flex-1 flex flex-col relative">
-                <Topbar />
+                <Topbar user={user} onLogout={onLogout} />
                 <main className="flex-1 overflow-y-auto p-6 md:p-8 scroll-smooth">
                     <motion.div 
                         key={useLocation().pathname}
@@ -184,20 +206,64 @@ function AppShell() {
                             <Route path="/companies" element={<CompaniesPage />} />
                             <Route path="/sessions" element={<SessionsPage />} />
                             <Route path="/sheets" element={<SheetsPage />} />
+                            <Route path="/settings" element={<SettingsPage user={user} />} />
                             <Route path="*" element={<div className="flex items-center justify-center h-full text-gray-500">Page under construction...</div>} />
                         </Routes>
                     </motion.div>
                 </main>
             </div>
-            <Toaster theme="dark" position="bottom-right" richColors toastOptions={{ style: { background: '#1E293B', borderColor: 'rgba(255,255,255,0.1)' } }} />
         </div>
     );
 }
 
 export default function App() {
+    const [user, setUser] = useState(() => restoreSession());
+    const [authChecked, setAuthChecked] = useState(false);
+
+    // Background validation — confirms token is still valid server-side
+    useEffect(() => {
+        if (user) {
+            validateSession().then((validUser) => {
+                if (!validUser) {
+                    setUser(null);
+                } else {
+                    setUser(validUser);
+                }
+                setAuthChecked(true);
+            });
+        } else {
+            setAuthChecked(true);
+        }
+    }, []);
+
+    const handleLogin = (userData, token) => {
+        if (token) saveAuth(token, userData);
+        setUser(userData);
+    };
+
+    const handleLogout = () => {
+        clearAuth();
+        setUser(null);
+    };
+
+    // Unauthenticated: show landing page at / and login page at /login
+    if (!user) {
+        return (
+            <BrowserRouter>
+                <Routes>
+                    <Route path="/" element={<LandingPage />} />
+                    <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+                    <Route path="*" element={<LoginPage onLogin={handleLogin} />} />
+                </Routes>
+                <Toaster theme="dark" position="bottom-right" richColors toastOptions={{ style: { background: '#1E293B', borderColor: 'rgba(255,255,255,0.1)' } }} />
+            </BrowserRouter>
+        );
+    }
+
     return (
         <BrowserRouter>
-            <AppShell />
+            <AppShell user={user} onLogout={handleLogout} />
+            <Toaster theme="dark" position="bottom-right" richColors toastOptions={{ style: { background: '#1E293B', borderColor: 'rgba(255,255,255,0.1)' } }} />
         </BrowserRouter>
     );
 }

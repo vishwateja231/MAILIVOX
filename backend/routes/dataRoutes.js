@@ -545,4 +545,40 @@ router.get('/exports', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// API KEY MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+router.get('/keys/stats', async (req, res) => {
+    try {
+        const { getKeyStats } = require('../services/validation/keyManager');
+        res.json(await getKeyStats());
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/keys/add', async (req, res) => {
+    try {
+        const { key, label, limit } = req.body;
+        if (!key || !key.startsWith('cm_live_')) return res.status(400).json({ error: 'Invalid key (must start with cm_live_)' });
+        const { addKey } = require('../services/validation/keyManager');
+        const result = await addKey(key, label || null, limit || 100);
+        if (result.error) return res.status(400).json(result);
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/keys/:id', async (req, res) => {
+    try {
+        const { removeKey } = require('../services/validation/keyManager');
+        res.json(await removeKey(req.params.id));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/keys/cleanup', async (req, res) => {
+    try {
+        const { removeExhaustedKeys } = require('../services/validation/keyManager');
+        res.json(await removeExhaustedKeys());
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

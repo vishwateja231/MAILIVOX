@@ -231,3 +231,9 @@ export const getImportSessions = () => axios.get(`${API}/api/import/sessions`);
 export const getConversations = (params) => axios.get(`${API}/api/outreach/conversations`, { params });
 export const getCampaignHistory = (params) => axios.get(`${API}/api/outreach/history`, { params });
 export const previewEmail = (data) => axios.post(`${API}/api/outreach/preview`, data);
+
+// ─── API Key Management ───────────────────────────────────────────────────────
+export const getKeyStats = () => axios.get(`${API}/api/keys/stats`);
+export const addApiKey = (key, label, limit) => axios.post(`${API}/api/keys/add`, { key, label, limit });
+export const deleteApiKey = (id) => axios.delete(`${API}/api/keys/${id}`);
+export const cleanupExhaustedKeys = () => axios.post(`${API}/api/keys/cleanup`);

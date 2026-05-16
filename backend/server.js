@@ -12,6 +12,7 @@ const outreachRoutes = require('./routes/outreachRoutes');
 const assetsRoutes = require('./routes/assetsRoutes');
 const webhookRoutes = require('./routes/webhookRoutes');
 const importRoutes = require('./routes/importRoutes');
+const authRoutes = require('./routes/authRoutes');
 const emailQueue = require('./services/mail/emailQueue');
 const { startFollowUpProcessor } = require('./services/mail/followUpProcessor');
 
@@ -22,6 +23,9 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// ─── Auth Routes (before rate limiter) ─────────────────────────────────────────
+app.use('/api', authRoutes);
 
 // ─── Rate Limiting ─────────────────────────────────────────────────────────────
 const apiLimiter = rateLimit({

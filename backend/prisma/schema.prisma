@@ -324,3 +324,38 @@ model UserSignature {
 
   @@index([isDefault])
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// API KEY MANAGEMENT — CheckMail verification key rotation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  service     String   @default("checkmail") // checkmail, etc.
+  key         String   @unique
+  label       String?
+  creditsUsed Int      @default(0)
+  creditLimit Int      @default(100)
+  isActive    Boolean  @default(true)
+  isExhausted Boolean  @default(false)
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([service, isActive])
+  @@index([isExhausted])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTHENTICATION — User management & access control
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model User {
+  id          String   @id @default(cuid())
+  username    String   @unique
+  password    String   // bcrypt hashed
+  role        String   @default("pending") // admin, user, pending
+  permissions String[] @default([]) // sendEmails, viewLeads, manageKeys, etc.
+  isApproved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  lastLoginAt DateTime?
+}

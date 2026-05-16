@@ -27,6 +27,10 @@ npm-debug.log*
 # Prisma
 backend/prisma/*.db
 
+# Sensitive files
+backend/apikeys_list.json
+backend/seedAdmin.js
+
 # Misc
 *.tgz
 .cache/

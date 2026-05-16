@@ -13,6 +13,7 @@
 
 const { getPatternScore } = require('../generator');
 const { validateSyntax, getMxHost, detectProvider, isEnterpriseProvider } = require('./validationEngine');
+const { getCurrentKey, recordUsage } = require('./keyManager');
 const prisma = require('../db/prismaClient');
 const { broadcast } = require('../eventBus');
 
@@ -172,7 +173,7 @@ async function validateOne(item) {
         }
 
         // Layer 3: Real verification via CheckMail API (SMTP-level check)
-        const apiKey = process.env.CHECKMAIL_API_KEY;
+        const apiKey = getCurrentKey();
         if (apiKey) {
             try {
                 const response = await fetch(
@@ -182,6 +183,11 @@ async function validateOne(item) {
                 
                 if (response.ok) {
                     const data = await response.json();
+                    
+                    // Only charge for definitive results (valid, invalid, catch_all, disposable)
+                    if (data.status !== 'unknown') {
+                        recordUsage(1);
+                    }
                     
                     // Track domain stats
                     if (!domainStatus.has(domain)) domainStatus.set(domain, { valid: 0, invalid: 0 });
