@@ -8,18 +8,20 @@ import clsx from 'clsx';
 // Auth utilities
 import { restoreSession, validateSession, clearAuth, saveAuth } from './utils/auth';
 
-// ─── Lazy-loaded Pages (code splitting) ─────────────────────────────────────
-const CRMDashboard = lazy(() => import('./pages/CRMDashboard'));
-const LeadsPage = lazy(() => import('./pages/LeadsPage'));
-const EnginePage = lazy(() => import('./pages/EnginePage'));
-const CompaniesPage = lazy(() => import('./pages/CompaniesPage'));
-const SessionsPage = lazy(() => import('./pages/SessionsPage'));
-const SheetsPage = lazy(() => import('./pages/SheetsPage'));
-const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
-const OutreachPage = lazy(() => import('./pages/OutreachPage'));
-const ImportPage = lazy(() => import('./pages/ImportPage'));
-const SettingsPage = lazy(() => import('./pages/SettingsPage'));
-const LoginPage = lazy(() => import('./pages/LoginPage'));
+// ─── Dashboard pages (eager load — they're small, 5-20KB each) ──────────────
+import CRMDashboard from './pages/CRMDashboard';
+import LeadsPage from './pages/LeadsPage';
+import EnginePage from './pages/EnginePage';
+import CompaniesPage from './pages/CompaniesPage';
+import SessionsPage from './pages/SessionsPage';
+import SheetsPage from './pages/SheetsPage';
+import AnalyticsPage from './pages/AnalyticsPage';
+import OutreachPage from './pages/OutreachPage';
+import ImportPage from './pages/ImportPage';
+import SettingsPage from './pages/SettingsPage';
+import LoginPage from './pages/LoginPage';
+
+// ─── Landing page (lazy — only loaded for unauthenticated visitors) ──────────
 const LandingPage = lazy(() => import('./pages/landing/LandingPage'));
 
 // ─── Page Loading Spinner ────────────────────────────────────────────────────
@@ -198,22 +200,20 @@ function AppShell({ user, onLogout }) {
                 <Topbar user={user} onLogout={onLogout} />
                 <main className="flex-1 overflow-y-auto p-6 md:p-8 scroll-smooth">
                     <div className="max-w-7xl mx-auto w-full h-full">
-                        <Suspense fallback={<PageLoader />}>
-                            <Routes>
-                                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                                <Route path="/dashboard" element={<CRMDashboard />} />
-                                <Route path="/analytics" element={<AnalyticsPage />} />
-                                <Route path="/engine" element={<EnginePage />} />
-                                <Route path="/outreach" element={<OutreachPage />} />
-                                <Route path="/import" element={<ImportPage />} />
-                                <Route path="/leads" element={<LeadsPage />} />
-                                <Route path="/companies" element={<CompaniesPage />} />
-                                <Route path="/sessions" element={<SessionsPage />} />
-                                <Route path="/sheets" element={<SheetsPage />} />
-                                <Route path="/settings" element={<SettingsPage user={user} />} />
-                                <Route path="*" element={<div className="flex items-center justify-center h-full text-gray-500">Page under construction...</div>} />
-                            </Routes>
-                        </Suspense>
+                        <Routes>
+                            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                            <Route path="/dashboard" element={<CRMDashboard />} />
+                            <Route path="/analytics" element={<AnalyticsPage />} />
+                            <Route path="/engine" element={<EnginePage />} />
+                            <Route path="/outreach" element={<OutreachPage />} />
+                            <Route path="/import" element={<ImportPage />} />
+                            <Route path="/leads" element={<LeadsPage />} />
+                            <Route path="/companies" element={<CompaniesPage />} />
+                            <Route path="/sessions" element={<SessionsPage />} />
+                            <Route path="/sheets" element={<SheetsPage />} />
+                            <Route path="/settings" element={<SettingsPage user={user} />} />
+                            <Route path="*" element={<div className="flex items-center justify-center h-full text-gray-500">Page under construction...</div>} />
+                        </Routes>
                     </div>
                 </main>
             </div>
