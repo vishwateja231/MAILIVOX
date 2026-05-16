@@ -1,35 +1,58 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
-import { Brain, Users, BarChart3, Zap, LayoutDashboard, Building2, HardDrive, Layers, Bell, Search, Settings, PanelLeftClose, PanelLeft, Database, TerminalSquare, Send, Upload, LogOut } from 'lucide-react';
+import { Users, BarChart3, LayoutDashboard, Building2, Layers, Bell, Search, Settings, PanelLeftClose, PanelLeft, Database, TerminalSquare, Send, Upload, LogOut } from 'lucide-react';
 import { Toaster } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 
-// Import Pages
-import CRMDashboard from './pages/CRMDashboard';
-import LeadsPage from './pages/LeadsPage';
-import EnginePage from './pages/EnginePage';
-import CompaniesPage from './pages/CompaniesPage';
-import SessionsPage from './pages/SessionsPage';
-import SheetsPage from './pages/SheetsPage';
-import AnalyticsPage from './pages/AnalyticsPage';
-import OutreachPage from './pages/OutreachPage';
-import ImportPage from './pages/ImportPage';
-import SettingsPage from './pages/SettingsPage';
-import LoginPage from './pages/LoginPage';
-import LandingPage from './pages/landing/LandingPage';
-
 // Auth utilities
 import { restoreSession, validateSession, clearAuth, saveAuth } from './utils/auth';
+
+// ─── Lazy-loaded Pages (code splitting) ─────────────────────────────────────
+const CRMDashboard = lazy(() => import('./pages/CRMDashboard'));
+const LeadsPage = lazy(() => import('./pages/LeadsPage'));
+const EnginePage = lazy(() => import('./pages/EnginePage'));
+const CompaniesPage = lazy(() => import('./pages/CompaniesPage'));
+const SessionsPage = lazy(() => import('./pages/SessionsPage'));
+const SheetsPage = lazy(() => import('./pages/SheetsPage'));
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
+const OutreachPage = lazy(() => import('./pages/OutreachPage'));
+const ImportPage = lazy(() => import('./pages/ImportPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const LandingPage = lazy(() => import('./pages/landing/LandingPage'));
+
+// ─── Page Loading Spinner ────────────────────────────────────────────────────
+function PageLoader() {
+    return (
+        <div className="flex items-center justify-center h-full min-h-[200px]">
+            <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                <span className="text-xs text-gray-500">Loading...</span>
+            </div>
+        </div>
+    );
+}
+
+// ─── Full-screen Loading (for initial app load) ──────────────────────────────
+function AppLoader() {
+    return (
+        <div className="min-h-screen bg-background flex items-center justify-center">
+            <div className="flex flex-col items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-indigo-500 flex items-center justify-center shadow-[0_0_20px_rgba(56,189,248,0.4)] animate-pulse">
+                    <Send className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-sm text-gray-400">Connecting...</span>
+            </div>
+        </div>
+    );
+}
 
 // ─── Animated Background ────────────────────────────────────────────────────────
 function Background() {
     return (
         <div className="fixed inset-0 z-[-1] overflow-hidden bg-background pointer-events-none">
-            {/* Grid Pattern */}
             <div className="absolute inset-0 bg-grid-pattern opacity-30" />
-            
-            {/* Glowing Blobs */}
             <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/20 blur-[120px] animate-blob" />
             <div className="absolute top-[20%] right-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-500/20 blur-[120px] animate-blob animation-delay-2000" />
             <div className="absolute bottom-[-20%] left-[20%] w-[40%] h-[40%] rounded-full bg-violet-600/20 blur-[120px] animate-blob animation-delay-4000" />
@@ -58,10 +81,11 @@ const NAV_ITEMS = [
 
 function Sidebar({ collapsed, setCollapsed }) {
     return (
-        <motion.aside 
-            initial={false}
-            animate={{ width: collapsed ? 80 : 260 }}
-            className="flex-shrink-0 bg-surface/30 backdrop-blur-xl border-r border-white/5 flex flex-col z-20"
+        <aside 
+            className={clsx(
+                "flex-shrink-0 bg-surface/30 backdrop-blur-xl border-r border-white/5 flex flex-col z-20 transition-all duration-200",
+                collapsed ? "w-20" : "w-[260px]"
+            )}
         >
             {/* Logo Area */}
             <div className="h-16 flex items-center justify-between px-4 border-b border-white/5">
@@ -69,18 +93,11 @@ function Sidebar({ collapsed, setCollapsed }) {
                     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-indigo-500 flex items-center justify-center shadow-[0_0_15px_rgba(56,189,248,0.4)] shrink-0">
                         <Send className="w-4 h-4 text-white" />
                     </div>
-                    <AnimatePresence>
-                        {!collapsed && (
-                            <motion.span 
-                                initial={{ opacity: 0, x: -10 }} 
-                                animate={{ opacity: 1, x: 0 }} 
-                                exit={{ opacity: 0, x: -10 }}
-                                className="font-bold tracking-wide text-sm"
-                            >
-                                MAILI<span className="text-primary">VOX</span>
-                            </motion.span>
-                        )}
-                    </AnimatePresence>
+                    {!collapsed && (
+                        <span className="font-bold tracking-wide text-sm">
+                            MAILI<span className="text-primary">VOX</span>
+                        </span>
+                    )}
                 </div>
                 <button onClick={() => setCollapsed(!collapsed)} className="text-gray-400 hover:text-white transition-colors shrink-0">
                     {collapsed ? <PanelLeft className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
@@ -105,14 +122,8 @@ function Sidebar({ collapsed, setCollapsed }) {
                                     )}
                                     title={collapsed ? item.label : undefined}
                                 >
-                                    <item.icon className={clsx("w-5 h-5 shrink-0 transition-colors group-hover:text-primary")} />
-                                    <AnimatePresence>
-                                        {!collapsed && (
-                                            <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                                                {item.label}
-                                            </motion.span>
-                                        )}
-                                    </AnimatePresence>
+                                    <item.icon className="w-5 h-5 shrink-0 transition-colors group-hover:text-primary" />
+                                    {!collapsed && <span>{item.label}</span>}
                                 </NavLink>
                             ))}
                         </div>
@@ -127,7 +138,7 @@ function Sidebar({ collapsed, setCollapsed }) {
                     {!collapsed && <span className="text-sm font-medium">Settings</span>}
                 </NavLink>
             </div>
-        </motion.aside>
+        </aside>
     );
 }
 
@@ -154,7 +165,6 @@ function Topbar({ user, onLogout }) {
                     <Bell className="w-5 h-5" />
                     <span className="absolute top-0 right-0 w-2 h-2 bg-primary rounded-full animate-pulse shadow-[0_0_10px_rgba(56,189,248,1)]" />
                 </button>
-                {/* User info + Logout */}
                 <div className="flex items-center gap-3">
                     <div className="hidden md:flex flex-col items-end">
                         <span className="text-xs font-medium text-white">{user?.username}</span>
@@ -187,29 +197,24 @@ function AppShell({ user, onLogout }) {
             <div className="flex-1 flex flex-col relative">
                 <Topbar user={user} onLogout={onLogout} />
                 <main className="flex-1 overflow-y-auto p-6 md:p-8 scroll-smooth">
-                    <motion.div 
-                        key={useLocation().pathname}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.2 }}
-                        className="max-w-7xl mx-auto w-full h-full"
-                    >
-                        <Routes>
-                            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                            <Route path="/dashboard" element={<CRMDashboard />} />
-                            <Route path="/analytics" element={<AnalyticsPage />} />
-                            <Route path="/engine" element={<EnginePage />} />
-                            <Route path="/outreach" element={<OutreachPage />} />
-                            <Route path="/import" element={<ImportPage />} />
-                            <Route path="/leads" element={<LeadsPage />} />
-                            <Route path="/companies" element={<CompaniesPage />} />
-                            <Route path="/sessions" element={<SessionsPage />} />
-                            <Route path="/sheets" element={<SheetsPage />} />
-                            <Route path="/settings" element={<SettingsPage user={user} />} />
-                            <Route path="*" element={<div className="flex items-center justify-center h-full text-gray-500">Page under construction...</div>} />
-                        </Routes>
-                    </motion.div>
+                    <div className="max-w-7xl mx-auto w-full h-full">
+                        <Suspense fallback={<PageLoader />}>
+                            <Routes>
+                                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                                <Route path="/dashboard" element={<CRMDashboard />} />
+                                <Route path="/analytics" element={<AnalyticsPage />} />
+                                <Route path="/engine" element={<EnginePage />} />
+                                <Route path="/outreach" element={<OutreachPage />} />
+                                <Route path="/import" element={<ImportPage />} />
+                                <Route path="/leads" element={<LeadsPage />} />
+                                <Route path="/companies" element={<CompaniesPage />} />
+                                <Route path="/sessions" element={<SessionsPage />} />
+                                <Route path="/sheets" element={<SheetsPage />} />
+                                <Route path="/settings" element={<SettingsPage user={user} />} />
+                                <Route path="*" element={<div className="flex items-center justify-center h-full text-gray-500">Page under construction...</div>} />
+                            </Routes>
+                        </Suspense>
+                    </div>
                 </main>
             </div>
         </div>
@@ -218,21 +223,17 @@ function AppShell({ user, onLogout }) {
 
 export default function App() {
     const [user, setUser] = useState(() => restoreSession());
-    const [authChecked, setAuthChecked] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     // Background validation — confirms token is still valid server-side
     useEffect(() => {
         if (user) {
             validateSession().then((validUser) => {
-                if (!validUser) {
-                    setUser(null);
-                } else {
-                    setUser(validUser);
-                }
-                setAuthChecked(true);
-            });
+                if (!validUser) setUser(null);
+                else setUser(validUser);
+            }).finally(() => setLoading(false));
         } else {
-            setAuthChecked(true);
+            setLoading(false);
         }
     }, []);
 
@@ -246,15 +247,20 @@ export default function App() {
         setUser(null);
     };
 
-    // Unauthenticated: show landing page at / and login page at /login
+    // Show loader while validating session
+    if (loading) return <AppLoader />;
+
+    // Unauthenticated
     if (!user) {
         return (
             <BrowserRouter>
-                <Routes>
-                    <Route path="/" element={<LandingPage />} />
-                    <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
-                    <Route path="*" element={<LoginPage onLogin={handleLogin} />} />
-                </Routes>
+                <Suspense fallback={<AppLoader />}>
+                    <Routes>
+                        <Route path="/" element={<LandingPage />} />
+                        <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+                        <Route path="*" element={<LoginPage onLogin={handleLogin} />} />
+                    </Routes>
+                </Suspense>
                 <Toaster theme="dark" position="bottom-right" richColors toastOptions={{ style: { background: '#1E293B', borderColor: 'rgba(255,255,255,0.1)' } }} />
             </BrowserRouter>
         );

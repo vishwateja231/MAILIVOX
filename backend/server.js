@@ -20,6 +20,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── Security ──────────────────────────────────────────────────────────────────
+app.set('trust proxy', 1); // Trust first proxy (Render, Railway, etc.)
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(cors({
     origin: [

@@ -13,6 +13,7 @@ export default function LoginPage({ onLogin }) {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [loadingMsg, setLoadingMsg] = useState('');
     const [signupSuccess, setSignupSuccess] = useState(false);
 
     const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
@@ -20,6 +21,11 @@ export default function LoginPage({ onLogin }) {
     const handleSignIn = async () => {
         if (!username.trim() || !password) return toast.error('Fill in all fields');
         setLoading(true);
+        setLoadingMsg('');
+
+        // Show "waking up" message if request takes > 5s (Render cold start)
+        const slowTimer = setTimeout(() => setLoadingMsg('Server is waking up, hang tight...'), 5000);
+
         try {
             const res = await fetch(`${API}/api/auth/login`, {
                 method: 'POST',
@@ -30,8 +36,8 @@ export default function LoginPage({ onLogin }) {
             if (!res.ok) { toast.error(data.error || 'Login failed'); return; }
             toast.success('Welcome back!');
             onLogin(data.user, data.token);
-        } catch (e) { toast.error('Connection failed'); }
-        finally { setLoading(false); }
+        } catch (e) { toast.error('Connection failed — server may be starting up. Try again in 30s.'); }
+        finally { clearTimeout(slowTimer); setLoading(false); setLoadingMsg(''); }
     };
 
     const handleSignUp = async () => {
@@ -39,6 +45,8 @@ export default function LoginPage({ onLogin }) {
         if (password !== confirmPassword) return toast.error('Passwords do not match');
         if (password.length < 6) return toast.error('Password must be at least 6 characters');
         setLoading(true);
+        setLoadingMsg('');
+        const slowTimer = setTimeout(() => setLoadingMsg('Server is waking up, hang tight...'), 5000);
         try {
             const res = await fetch(`${API}/api/auth/signup`, {
                 method: 'POST',
@@ -49,8 +57,8 @@ export default function LoginPage({ onLogin }) {
             if (!res.ok) { toast.error(data.error || 'Signup failed'); return; }
             setSignupSuccess(true);
             toast.success('Account created!');
-        } catch (e) { toast.error('Connection failed'); }
-        finally { setLoading(false); }
+        } catch (e) { toast.error('Connection failed — server may be starting up. Try again in 30s.'); }
+        finally { clearTimeout(slowTimer); setLoading(false); setLoadingMsg(''); }
     };
 
     return (
@@ -164,6 +172,9 @@ export default function LoginPage({ onLogin }) {
                                     {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : null}
                                     {tab === 'signin' ? 'Sign In' : 'Create Account'}
                                 </button>
+                                {loadingMsg && (
+                                    <p className="text-xs text-center text-gray-500 mt-2 animate-pulse">{loadingMsg}</p>
+                                )}
                             </div>
                         </>
                     )}
