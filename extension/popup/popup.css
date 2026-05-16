@@ -25,12 +25,22 @@ body {
   background: var(--bg);
 }
 
+body.sidepanel {
+  width: 100%;
+  min-width: 300px;
+  min-height: 100vh;
+}
+
 button {
   font: inherit;
 }
 
 .shell {
   padding: 16px;
+}
+
+.sidepanel .shell {
+  width: 100%;
 }
 
 .topbar,
@@ -54,9 +64,10 @@ footer {
   height: 34px;
   place-items: center;
   border-radius: 8px;
-  color: #06253a;
-  background: var(--primary);
-  font-weight: 900;
+  background: url("../icons/icon48.png") center / cover no-repeat;
+  color: transparent;
+  font-size: 0;
+  flex: 0 0 auto;
 }
 
 h1,
@@ -223,4 +234,32 @@ p,
 footer {
   justify-content: center;
   padding-top: 8px;
+}
+
+/* Global Stop Button */
+.stop-btn {
+  width: 100%;
+  margin-top: 10px;
+  border: 2px solid var(--danger);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #fff;
+  background: rgba(239, 68, 68, 0.15);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.stop-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.35);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+}
+
+.stop-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  border-color: var(--line);
+  color: var(--muted);
 }

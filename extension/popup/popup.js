@@ -1,5 +1,5 @@
-const DEFAULT_API_URL = 'https://mailivox-backend.onrender.com';
-const DASHBOARD_URL = 'https://mailivox.vercel.app';
+const DEFAULT_API_URL = 'http://localhost:3000';
+const DASHBOARD_URL = 'http://localhost:5173';
 
 const els = {
   pageLabel: document.getElementById('pageLabel'),
@@ -44,15 +44,37 @@ function bindEvents() {
     if (msg.action === 'progressUpdate' || msg.action === 'extractionComplete') {
       renderStatus(msg.state || msg);
       if (msg.action === 'extractionComplete') {
-        setMessage('Extraction complete.', 'success');
+        const state = msg.state || msg;
+        setMessage(state.error ? state.error : 'Extraction complete.', state.error ? 'error' : 'success');
       }
+    }
+  });
+
+  chrome.tabs.onActivated.addListener(() => {
+    refreshCurrentTabContext();
+  });
+
+  chrome.tabs.onUpdated.addListener((tabId, info) => {
+    if (info.status === 'complete' && activeTab?.id === tabId) {
+      refreshCurrentTabContext();
     }
   });
 }
 
+async function refreshCurrentTabContext() {
+  await loadActiveTab();
+  await refreshCounts();
+}
+
 async function getSettings() {
   const stored = await chrome.storage.local.get(['apiUrl']);
-  return { apiUrl: stored.apiUrl || DEFAULT_API_URL };
+  const apiUrl = !stored.apiUrl || stored.apiUrl.includes('mailivox-backend.onrender.com')
+    ? DEFAULT_API_URL
+    : stored.apiUrl;
+  if (apiUrl !== stored.apiUrl) {
+    await chrome.storage.local.set({ apiUrl });
+  }
+  return { apiUrl };
 }
 
 async function checkBackend() {
@@ -134,7 +156,7 @@ function sendRuntimeMessage(payload) {
 
 async function startQuickExtract() {
   if (detectedProfiles.length === 0) return;
-  setMessage(`Queuing ${detectedProfiles.length} profiles...`);
+  setMessage(`Sending ${detectedProfiles.length} visible profiles to Lead Intelligence...`);
   await sendRuntimeMessage({
     action: 'startMode1',
     profiles: detectedProfiles,
@@ -163,8 +185,12 @@ async function getDeepLimit() {
 
 async function stopExtraction() {
   await sendRuntimeMessage({ action: 'stopExtraction' });
-  await refreshStatus();
-  setMessage('Stopping after the current profile finishes.');
+  setMessage('Stopped. All extraction activities halted.', 'error');
+  // Reset UI immediately
+  els.stopBtn.disabled = true;
+  els.quickBtn.disabled = detectedProfiles.length === 0;
+  els.deepBtn.disabled = detectedConnections.length === 0;
+  els.progressLabel.textContent = 'Stopped';
 }
 
 async function refreshStatus() {
@@ -181,7 +207,9 @@ function renderStatus(state) {
   els.progressLabel.textContent = state.running ? `Mode ${state.mode} running` : 'Idle';
   els.progressNumbers.textContent = `${processed}/${total}`;
   els.progressBar.style.width = `${pct}%`;
-  els.emailsFound.textContent = `Emails found: ${progress.emailsFound || 0}`;
+  els.emailsFound.textContent = state.mode === 1
+    ? `Emails generated: ${progress.emailsFound || 0}`
+    : `Emails found: ${progress.emailsFound || 0}`;
   els.stopBtn.disabled = !state.running;
   els.quickBtn.disabled = state.running || detectedProfiles.length === 0;
   els.deepBtn.disabled = state.running || detectedConnections.length === 0;

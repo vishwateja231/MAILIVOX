@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mailivox</title>
-  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="../popup/popup.css">
 </head>
-<body>
+<body class="sidepanel">
   <main class="shell">
     <header class="topbar">
       <div class="brand-mark">M</div>
@@ -52,8 +52,8 @@
       <div class="bar"><span id="progressBar"></span></div>
       <div class="progress-meta muted">
         <span id="emailsFound">Emails found: 0</span>
+        <button id="stopBtn" class="link" disabled>Stop</button>
       </div>
-      <button id="stopBtn" class="stop-btn" disabled>⬛ STOP ALL</button>
     </section>
 
     <p id="message" class="message"></p>
@@ -62,6 +62,6 @@
       <button id="dashboardBtn" class="footer-link">Open Dashboard</button>
     </footer>
   </main>
-  <script src="popup.js"></script>
+  <script src="../popup/popup.js"></script>
 </body>
 </html>

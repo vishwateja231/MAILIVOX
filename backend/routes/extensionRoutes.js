@@ -25,7 +25,7 @@ const router = express.Router();
 
 const prisma = require('../services/db/prismaClient');
 const { findDomain } = require('../services/domainFinder');
-const { parseName } = require('../services/nameParser');
+const { parseName, sanitizeLinkedInName } = require('../services/nameParser');
 const { generatePermutations } = require('../services/generator');
 const { getPattern } = require('../services/patternLearner');
 const logger = require('../services/logger/logger');
@@ -44,7 +44,7 @@ function normalizeEmail(email) {
 
 function deriveName(contact) {
     const supplied = String(contact.fullName || contact.name || '').trim();
-    if (supplied) return supplied;
+    if (supplied) return sanitizeLinkedInName(supplied) || supplied.split(/\s+/).slice(0, 3).join(' ');
 
     const email = normalizeEmail(contact.email);
     const local = email.split('@')[0] || 'LinkedIn Contact';
@@ -404,7 +404,8 @@ router.post('/leads/process', async (req, res) => {
         const seenKeys = new Set();
 
         for (const profile of clean) {
-            const fullName = String(profile.fullName).trim();
+            const rawFullName = String(profile.fullName).trim();
+            const fullName = sanitizeLinkedInName(rawFullName) || rawFullName.split(/\s+/).slice(0, 3).join(' ');
             const companyName = String(profile.company || '').trim();
             const role = profile.role ? String(profile.role).trim() : null;
             const location = profile.location ? String(profile.location).trim() : null;

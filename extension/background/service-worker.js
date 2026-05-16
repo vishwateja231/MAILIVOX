@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = 'https://mailivox-backend.onrender.com';
+const DEFAULT_API_URL = 'http://localhost:3000';
 
 let extractionState = {
   running: false,
@@ -8,6 +8,9 @@ let extractionState = {
   error: null,
   summary: null
 };
+
+// Track tabs opened by Mode 2 so we can close them on stop
+let activeModeTab = null;
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'MAILIVOX_TOKEN_FOUND') {
@@ -22,8 +25,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.action === 'stopExtraction') {
     extractionState.running = false;
+    // Close any active tab opened by Mode 2
+    if (activeModeTab) {
+      try { chrome.tabs.remove(activeModeTab); } catch (_) {}
+      activeModeTab = null;
+    }
     persistState();
     sendResponse({ stopped: true });
+    notify('extractionComplete');
     return false;
   }
 
@@ -51,18 +60,45 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const existing = await chrome.storage.local.get(['apiUrl', 'minDelayMs', 'maxDelayMs', 'maxDeepProfiles']);
-  await chrome.storage.local.set({
-    apiUrl: existing.apiUrl || DEFAULT_API_URL,
-    minDelayMs: existing.minDelayMs || 2500,
-    maxDelayMs: existing.maxDelayMs || 5500,
-    maxDeepProfiles: existing.maxDeepProfiles || 50
-  });
+  await ensureLocalDefaults();
+  await configureSidePanel();
+});
+
+ensureLocalDefaults();
+configureSidePanel();
+
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!chrome.sidePanel?.open || !tab?.windowId) return;
+  await chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
 async function storeCapturedToken(token) {
   if (typeof token === 'string' && token.split('.').length === 3) {
     await chrome.storage.local.set({ mailivox_token: token });
+  }
+}
+
+async function ensureLocalDefaults() {
+  const existing = await chrome.storage.local.get(['apiUrl', 'minDelayMs', 'maxDelayMs', 'maxDeepProfiles']);
+  const nextApiUrl = !existing.apiUrl || existing.apiUrl.includes('mailivox-backend.onrender.com')
+    ? DEFAULT_API_URL
+    : existing.apiUrl;
+
+  await chrome.storage.local.set({
+    apiUrl: nextApiUrl,
+    minDelayMs: existing.minDelayMs || 2500,
+    maxDelayMs: existing.maxDelayMs || 5500,
+    maxDeepProfiles: existing.maxDeepProfiles || 50
+  });
+}
+
+async function configureSidePanel() {
+  if (!chrome.sidePanel) return;
+
+  try {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  } catch (_) {
+    // Older Chromium builds may not support this; action.onClicked still opens it.
   }
 }
 
@@ -75,17 +111,39 @@ async function handleMode1(profiles, searchUrl) {
       throw new Error('No LinkedIn profiles found on this page.');
     }
 
+    const rawText = profilesToLeadIntelligenceText(profiles);
     const body = {
+      rawText,
       sessionName: `Chrome Quick Extract ${new Date().toLocaleString()}`,
-      source: 'chrome_extension',
-      searchUrl,
-      extractedProfiles: profiles
+      excludeInterns: true,
+      excludeFreshers: false
     };
 
-    const summary = await apiJson('/api/leads/process', 'POST', body);
-    extractionState.progress.processed = summary.totalProcessed || profiles.length;
-    extractionState.progress.emailsFound = summary.totalEmailsGenerated || 0;
-    extractionState.summary = summary;
+    await apiEventStream('/api/run-pipeline', 'POST', body, (event) => {
+      if (!extractionState.running) return;
+
+      if (event.type === 'progress') {
+        extractionState.progress.processed = event.data?.current || extractionState.progress.processed;
+        extractionState.progress.total = event.data?.total || extractionState.progress.total;
+      }
+
+      if (event.type === 'profile_done') {
+        extractionState.progress.processed = Math.max(
+          extractionState.progress.processed,
+          Number(event.data?.index || 0) + 1
+        );
+        extractionState.progress.emailsFound += Number(event.data?.emailCount || 0);
+        extractionState.results.push(event.data);
+      }
+
+      if (event.type === 'complete') {
+        extractionState.progress.processed = event.data?.processed || extractionState.progress.processed;
+        extractionState.progress.emailsFound = event.data?.emailsGenerated || extractionState.progress.emailsFound;
+        extractionState.summary = event.data;
+      }
+
+      notify('progressUpdate');
+    });
   } catch (err) {
     extractionState.error = err.message;
   } finally {
@@ -93,6 +151,38 @@ async function handleMode1(profiles, searchUrl) {
     await persistState();
     notify('extractionComplete');
   }
+}
+
+function profilesToLeadIntelligenceText(profiles) {
+  return profiles
+    .map(profile => {
+      const company = cleanBlockLine(profile.company);
+      const role = cleanBlockLine(profile.role);
+      const headline = buildLeadIntelligenceHeadline(role, company);
+      const lines = [
+        cleanBlockLine(profile.fullName),
+        headline,
+        profile.location ? `Location: ${cleanBlockLine(profile.location)}` : '',
+        company ? `Current: ${role ? `${role} at ` : ''}${company}` : '',
+        profile.linkedinUrl ? `LinkedIn: ${cleanBlockLine(profile.linkedinUrl)}` : ''
+      ].filter(Boolean);
+
+      return lines.join('\n');
+    })
+    .join('\n\n');
+}
+
+function buildLeadIntelligenceHeadline(role, company) {
+  if (role && company && !role.toLowerCase().includes(company.toLowerCase())) {
+    return `Role: ${role} at ${company}`;
+  }
+  if (role) return `Role: ${role}`;
+  if (company) return `Role: Employee at ${company}`;
+  return '';
+}
+
+function cleanBlockLine(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
 async function handleMode2(connectionUrls) {
@@ -117,6 +207,7 @@ async function handleMode2(connectionUrls) {
       try {
         const url = normalizeLinkedInUrl(rawUrl);
         tab = await chrome.tabs.create({ url, active: false });
+        activeModeTab = tab.id;
         await waitForTabLoad(tab.id);
         await sleep(1600);
 
@@ -143,6 +234,7 @@ async function handleMode2(connectionUrls) {
         notify('progressUpdate');
         if (tab?.id) {
           try { await chrome.tabs.remove(tab.id); } catch (_) {}
+          activeModeTab = null;
         }
       }
 
@@ -191,6 +283,53 @@ async function apiJson(endpoint, method, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed with HTTP ${res.status}`);
   return data;
+}
+
+async function apiEventStream(endpoint, method, body, onEvent) {
+  const { apiUrl, mailivox_token } = await chrome.storage.local.get(['apiUrl', 'mailivox_token']);
+  const headers = { 'Content-Type': 'application/json' };
+  if (mailivox_token) headers.Authorization = `Bearer ${mailivox_token}`;
+
+  const res = await fetch(`${apiUrl || DEFAULT_API_URL}${endpoint}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Request failed with HTTP ${res.status}`);
+  }
+
+  if (!res.body) return;
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (extractionState.running) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() || '';
+
+    for (const chunk of chunks) {
+      const dataLine = chunk
+        .split('\n')
+        .find(line => line.startsWith('data: '));
+      if (!dataLine) continue;
+
+      try {
+        onEvent(JSON.parse(dataLine.slice(6)));
+      } catch (_) {}
+    }
+  }
+
+  try {
+    await reader.cancel();
+  } catch (_) {}
 }
 
 function normalizeLinkedInUrl(url) {
