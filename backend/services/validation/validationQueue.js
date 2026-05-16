@@ -26,8 +26,8 @@ let totalInvalid = 0;
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-const CONCURRENCY = 5;
-const DELAY_BETWEEN_MS = 50;        // 50ms between batches (fast)
+const CONCURRENCY = 3;
+const DELAY_BETWEEN_MS = 300;        // 300ms between batches (respect API rate limits)
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -97,13 +97,16 @@ function getStats() {
     };
 }
 
+// ─── Domain Status Cache (skip domains where all emails are invalid) ─────────
+const domainStatus = new Map(); // domain → { valid: 0, invalid: 0, checked: boolean }
+
 // ─── Queue Processor ─────────────────────────────────────────────────────────
 
 async function processQueue() {
     if (isProcessing) return;
     isProcessing = true;
 
-    console.log('[validationQueue] Processing ' + queue.length + ' emails (pattern-only mode, fast)');
+    console.log('[validationQueue] Processing ' + queue.length + ' emails via CheckMail API');
 
     while (queue.length > 0) {
         // Take a batch
@@ -114,12 +117,12 @@ async function processQueue() {
 
         totalProcessed += batch.length;
 
-        // Broadcast progress every 10 emails
-        if (totalProcessed % 10 === 0) {
+        // Broadcast progress every 5 emails
+        if (totalProcessed % 5 === 0) {
             broadcast('validation:progress', { totalProcessed, totalValid, totalInvalid, pending: queue.length });
         }
 
-        // Minimal delay between batches
+        // Delay between batches (respect API rate limits)
         if (queue.length > 0) {
             await new Promise(r => setTimeout(r, DELAY_BETWEEN_MS));
         }
@@ -143,75 +146,122 @@ async function validateOne(item) {
     const { emailId, email, pattern, tier } = item;
 
     try {
-        const patternScore = pattern === 'PROVIDED_EMAIL' ? 98 : getPatternScore(pattern, tier || 'A');
+        // User-provided emails are trusted — skip verification
+        if (pattern === 'PROVIDED_EMAIL') {
+            await updateEmailStatus(emailId, 'HIGH', 'VALID', 'User-provided email');
+            totalValid++;
+            return;
+        }
 
-        // Fast validation: MX check + pattern scoring (no SMTP, no DB history lookups)
-        
-        // Layer 1: Syntax
+        // Layer 1: Syntax check (free, instant)
         const syntax = validateSyntax(email);
         if (!syntax.valid) {
             await updateEmailStatus(emailId, 'INVALID', 'INVALID', 'Invalid syntax');
             totalInvalid++;
             return;
         }
-        
-        // Layer 2: MX check (with timeout)
+
+        // Layer 2: Domain-level check — if we already know this domain rejects everything, skip
+        const domain = syntax.domain;
+        const ds = domainStatus.get(domain);
+        if (ds && ds.invalid >= 3 && ds.valid === 0) {
+            // Domain has 3+ consecutive invalids and 0 valids — skip to save credits
+            await updateEmailStatus(emailId, 'INVALID', 'INVALID', 'Domain rejects all tested emails — likely wrong domain');
+            totalInvalid++;
+            return;
+        }
+
+        // Layer 3: Real verification via CheckMail API (SMTP-level check)
+        const apiKey = process.env.CHECKMAIL_API_KEY;
+        if (apiKey) {
+            try {
+                const response = await fetch(
+                    `https://api.checkmail.dev/v1/verify?email=${encodeURIComponent(email)}`,
+                    { headers: { 'Authorization': `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15000) }
+                );
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Track domain stats
+                    if (!domainStatus.has(domain)) domainStatus.set(domain, { valid: 0, invalid: 0 });
+                    const dstat = domainStatus.get(domain);
+                    
+                    if (data.status === 'valid') {
+                        dstat.valid++;
+                        await updateEmailStatus(emailId, 'HIGH', 'VALID', 'Verified — mailbox exists (SMTP confirmed)');
+                        totalValid++;
+                        return;
+                    } else if (data.status === 'invalid') {
+                        dstat.invalid++;
+                        const reason = data.reason ? `SMTP rejected (${data.reason})` : 'Mailbox does not exist';
+                        await updateEmailStatus(emailId, 'INVALID', 'INVALID', reason);
+                        totalInvalid++;
+                        
+                        // If 3+ invalids on this domain, mark remaining as invalid too (save credits)
+                        if (dstat.invalid >= 3 && dstat.valid === 0) {
+                            console.log('[validationQueue] Domain ' + domain + ' has 3+ invalid — skipping remaining');
+                            // Mark all remaining emails for this domain in the queue as invalid
+                            const remaining = queue.filter(q => q.email.endsWith('@' + domain));
+                            for (const r of remaining) {
+                                await updateEmailStatus(r.emailId, 'INVALID', 'INVALID', 'Domain rejects all tested emails');
+                                totalInvalid++;
+                            }
+                            // Remove them from queue
+                            queue = queue.filter(q => !q.email.endsWith('@' + domain));
+                        }
+                        return;
+                    } else if (data.status === 'catch_all') {
+                        dstat.valid++; // Catch-all means domain accepts, treat as potentially valid
+                        const patternScore = getPatternScore(pattern, tier || 'A');
+                        if (patternScore >= 70) {
+                            await updateEmailStatus(emailId, 'MEDIUM', 'VALID', 'Catch-all domain + strong pattern — likely valid');
+                            totalValid++;
+                        } else {
+                            await updateEmailStatus(emailId, 'LOW', 'PENDING', 'Catch-all domain — cannot confirm individual mailbox');
+                        }
+                        return;
+                    } else if (data.status === 'disposable') {
+                        await updateEmailStatus(emailId, 'INVALID', 'INVALID', 'Disposable email provider');
+                        totalInvalid++;
+                        return;
+                    } else {
+                        // 'unknown' — rate limited, retry later (free)
+                        await updateEmailStatus(emailId, 'LOW', 'PENDING', 'Verification inconclusive — will retry');
+                        return;
+                    }
+                } else if (response.status === 402) {
+                    console.warn('[validationQueue] CheckMail credits exhausted');
+                    // Mark remaining as PENDING
+                    await updateEmailStatus(emailId, 'MEDIUM', 'PENDING', 'Verification credits exhausted — unverified');
+                    return;
+                }
+            } catch (fetchErr) {
+                console.warn('[validationQueue] CheckMail API error:', fetchErr.message);
+            }
+        }
+
+        // Fallback: No API key or API failed — use MX check only (stays PENDING)
         let mxHost;
         try {
             mxHost = await Promise.race([
                 getMxHost(syntax.domain),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('MX timeout')), 3000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
             ]);
         } catch {
-            // MX timeout — use pattern score only
-            const newStatus = patternScore >= 60 ? 'VALID' : 'INVALID';
-            const confidence = patternScore >= 75 ? 'HIGH' : patternScore >= 50 ? 'MEDIUM' : 'LOW';
-            await updateEmailStatus(emailId, confidence, newStatus, 'MX lookup timeout, pattern-based');
-            if (newStatus === 'VALID') totalValid++; else totalInvalid++;
+            await updateEmailStatus(emailId, 'LOW', 'PENDING', 'Cannot verify — no API credits and MX timeout');
             return;
         }
-        
+
         if (!mxHost) {
-            await updateEmailStatus(emailId, 'INVALID', 'INVALID', 'No MX records');
+            await updateEmailStatus(emailId, 'INVALID', 'INVALID', 'No MX records — domain cannot receive email');
             totalInvalid++;
             return;
         }
-        
-        // Layer 3: Pattern-based confidence
-        const provider = detectProvider(mxHost);
-        let confidence, reason;
-        
-        if (patternScore >= 75) {
-            confidence = 'HIGH';
-            reason = 'Strong pattern (score ' + patternScore + '), valid MX (' + provider + ')';
-        } else if (patternScore >= 50) {
-            confidence = 'MEDIUM';
-            reason = 'Moderate pattern (score ' + patternScore + '), valid MX';
-        } else {
-            confidence = 'LOW';
-            reason = 'Weak pattern (score ' + patternScore + ')';
-        }
-        
-        // Boost for enterprise providers
-        if (isEnterpriseProvider(provider) && patternScore >= 60) {
-            confidence = 'HIGH';
-            reason = 'Enterprise provider (' + provider + '), strong pattern';
-        }
-        
-        const newStatus = confidence === 'LOW' ? 'INVALID' : 'VALID';
-        await updateEmailStatus(emailId, confidence, newStatus, reason);
-        
-        if (newStatus === 'VALID') totalValid++;
-        else totalInvalid++;
+
+        await updateEmailStatus(emailId, 'MEDIUM', 'PENDING', 'MX valid but mailbox unverified — add CheckMail credits to verify');
     } catch (e) {
-        // On error, mark based on pattern score alone
-        try {
-            const patternScore = pattern === 'PROVIDED_EMAIL' ? 98 : getPatternScore(pattern, tier || 'A');
-            const newStatus = patternScore >= 50 ? 'VALID' : 'INVALID';
-            const confidence = patternScore >= 75 ? 'HIGH' : patternScore >= 50 ? 'MEDIUM' : 'LOW';
-            await updateEmailStatus(emailId, confidence, newStatus, 'Validation error, pattern-based fallback');
-            if (newStatus === 'VALID') totalValid++; else totalInvalid++;
-        } catch (_) {}
+        // On error, leave as PENDING
     }
 }
 

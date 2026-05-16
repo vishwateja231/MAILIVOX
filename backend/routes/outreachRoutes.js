@@ -168,6 +168,12 @@ router.post('/outreach/bulk-send-template', async (req, res) => {
         for (const lead of leads) {
             const topEmail = lead.emails[0];
             if (!topEmail) { skipped.push({ id: lead.id, reason: 'no_email' }); continue; }
+            
+            // SAFETY: Only send to verified emails — never send to PENDING/unverified
+            if (topEmail.verificationStatus !== 'VALID' && topEmail.pattern !== 'PROVIDED_EMAIL') {
+                skipped.push({ id: lead.id, reason: 'email_not_verified', email: topEmail.email });
+                continue;
+            }
 
             // ── Normalize lead fields (prevent email-in-role, etc.) ───────────
             let leadRole = lead.role || '';
