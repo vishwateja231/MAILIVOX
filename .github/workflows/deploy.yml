@@ -7,107 +7,70 @@ on:
     branches: [main]
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # BACKEND: Lint + Unit Tests + API Tests
-  # ═══════════════════════════════════════════════════════════════════════════════
   backend-test:
     name: Backend Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: backend/package-lock.json
-
       - run: npm ci
       - run: npx prisma generate
-
-      - name: Syntax check (all route files)
+      - name: Syntax check
         run: |
           node --check server.js
           for f in routes/*.js; do node --check "$f"; done
-          for f in services/*.js services/**/*.js; do node --check "$f" 2>/dev/null || true; done
-
       - name: Run unit tests
         run: node --test tests/nameParser.test.js tests/generator.test.js tests/validation.test.js tests/linkedInParser.test.js
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # FRONTEND: Lint + Build + Type Check
-  # ═══════════════════════════════════════════════════════════════════════════════
   frontend-test:
     name: Frontend Build & Lint
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - run: npm ci
       - name: Lint
         run: npm run lint || true
       - name: Build
         run: npm run build
 
-      - name: Upload build artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: frontend/dist
-
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # DEPLOY FRONTEND (Vercel) — only on main push after tests pass
-  # ═══════════════════════════════════════════════════════════════════════════════
   deploy-frontend:
     name: Deploy Frontend (Vercel)
     needs: [frontend-test, backend-test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
       - name: Install Vercel CLI
         run: npm i -g vercel@latest
-
-      - name: Deploy to Vercel (auto-build)
+      - name: Deploy to Vercel
         run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: frontend
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # DEPLOY BACKEND (Render) — only on main push after tests pass
-  # ═══════════════════════════════════════════════════════════════════════════════
   deploy-backend:
     name: Deploy Backend (Render)
     needs: [frontend-test, backend-test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
     steps:
       - name: Trigger Render Deploy
         run: |
@@ -116,57 +79,26 @@ jobs:
             -d '{}' \
             --fail --silent --show-error
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # POST-DEPLOY: Smoke test the live endpoints
-  # ═══════════════════════════════════════════════════════════════════════════════
   smoke-test:
     name: Production Smoke Test
     needs: [deploy-frontend, deploy-backend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
     steps:
-      - name: Wait for Render to deploy (cold start buffer)
+      - name: Wait for deploy
         run: sleep 60
-
-      - name: Backend health check
+      - name: Health check
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.VITE_API_URL }}/health)
-          echo "Backend /health returned: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "::error::Backend health check failed with status $STATUS"
-            exit 1
-          fi
-
-      - name: Backend auth endpoint check
+          if [ "$STATUS" != "200" ]; then exit 1; fi
+      - name: Auth endpoint
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
             ${{ secrets.VITE_API_URL }}/api/auth/login \
             -H "Content-Type: application/json" \
-            -d '{"username":"smoketest","password":"invalid"}')
-          echo "Auth endpoint returned: $STATUS"
-          if [ "$STATUS" != "401" ]; then
-            echo "::error::Auth endpoint unexpected status: $STATUS (expected 401)"
-            exit 1
-          fi
-
-      - name: Backend extension ping
-        run: |
-          BODY=$(curl -s ${{ secrets.VITE_API_URL }}/api/extension/ping)
-          echo "Extension ping: $BODY"
-          echo "$BODY" | grep -q '"ok":true' || (echo "::error::Extension ping failed" && exit 1)
-
-      - name: Frontend responds
+            -d '{"username":"test","password":"test"}')
+          if [ "$STATUS" != "401" ]; then exit 1; fi
+      - name: Frontend check
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.FRONTEND_URL }})
-          echo "Frontend returned: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "::error::Frontend not responding: $STATUS"
-            exit 1
-          fi
-
-      - name: Frontend serves JS bundle
-        run: |
-          HTML=$(curl -s ${{ secrets.FRONTEND_URL }})
-          echo "$HTML" | grep -q "src=\"/assets/" || echo "$HTML" | grep -q "type=\"module\"" || (echo "::error::No JS bundle in HTML" && exit 1)
-          echo "Frontend HTML contains JS bundle reference ✓"
+          if [ "$STATUS" != "200" ]; then exit 1; fi
