@@ -1,6 +1,21 @@
 # Mailivox — AI-Powered Outreach Intelligence Platform
 
-> Enterprise-grade lead intelligence, email discovery, SMTP verification, AI outreach automation, follow-up management, and delivery tracking — built for recruiters, job seekers, and growth teams.
+<p align="center">
+  <img src="frontend/public/logo.png" alt="Mailivox Logo" width="80" height="80" />
+</p>
+
+<p align="center">
+  <strong>Self-hosted email intelligence engine for recruiters, job seekers, and growth teams.</strong>
+</p>
+
+<p align="center">
+  <a href="https://mailivox.vercel.app">Live Demo</a> •
+  <a href="https://github.com/vishwateja231/MAILIVOX">GitHub</a>
+</p>
+
+---
+
+> Enterprise-grade lead intelligence, email discovery, SMTP verification, AI outreach automation, follow-up management, reply detection, and delivery tracking — all from your own infrastructure.
 
 
 
@@ -132,12 +147,16 @@ Multi-layer resolution with priority:
 
 ### Validation Intelligence
 - 8-layer pipeline: syntax → disposable → MX → catch-all → SMTP → delivery history → bounce history → pattern match
+- **Early-stop logic**: stops validating after acquiring 2-3 valid emails per lead (saves API credits)
+- For leads with ≤5 patterns: stops after 1 valid. For leads with many patterns: stops after 3 valid.
+- Domain-level intelligence: if 3+ emails on a domain are invalid and 0 valid, skips remaining
 - Auto-validation after generation (feature-flagged, runs in background)
 - Enterprise provider detection (Microsoft365, Gmail, Proofpoint, Mimecast)
 - Tarpitting detection (adaptive behavior for throttling providers)
 - SMTP timeout = UNKNOWN (not INVALID) — doesn't penalize enterprise domains
-- Parallel workers (5 concurrent, 7s timeout, 1 retry)
-- Result caching (1 hour TTL)
+- Parallel workers (3 concurrent, configurable)
+- **Global stop** — frontend "Stop All" button clears the validation queue instantly
+- Graceful error handling: missing records (deleted leads) don't crash the queue
 
 ### Outreach System
 - Session-aware campaigns with lead selection
@@ -151,18 +170,24 @@ Multi-layer resolution with priority:
 
 ### Follow-Up Automation
 - Auto-schedules follow-ups after configurable delay (default 3 days)
-- Respects reply detection (stops if lead replied)
-- Max 2 follow-ups per lead
-- Threaded delivery (same Gmail conversation)
+- **Reply detection auto-cancel**: if recipient replies, ALL pending follow-ups for that lead are automatically cancelled
+- **Manual follow-up scheduling**: compose custom follow-ups with schedule picker (1h, 6h, 1d, 2d, 3d, 5d, 1w, 2w, 15d, 1m, or custom date)
+- **Scheduled sends**: queue non-threaded emails to new recipients at a future time
+- Threaded delivery (same Gmail/Outlook conversation via In-Reply-To/References headers)
 - Bounce protection: bounced leads auto-removed from follow-up queue
-- Processor runs every hour automatically
+- Processor runs every **5 minutes** (checks for due follow-ups)
+- Double-checks reply status RIGHT BEFORE sending (safety net even if webhook missed)
+- Max follow-up limit configurable per campaign
+- Cancel / Edit / Send-Now actions on any scheduled follow-up
 
 ### Delivery Intelligence (Resend Webhooks)
 - Dedicated webhook endpoint: `POST /api/webhooks/resend`
-- Handles: sent, delivered, bounced, complained, opened, clicked
+- Handles: sent, delivered, bounced, complained, opened, clicked, **received (reply detection)**
+- **Reply detection**: inbound emails matched to original recipients → marks as REPLIED → cancels all pending follow-ups and scheduled sends for that lead
 - Non-blocking async processing (responds 200 immediately)
 - Bounce protection: hard bounces → remove from follow-ups, blacklist email, reduce pattern confidence
 - Delivery learning: successful sends → boost pattern confidence for that domain
+- Real-time SSE broadcast for live dashboard updates (`reply:detected`, `bounce:detected`, `delivery:confirmed`)
 - Feature-flagged for safe rollout
 
 ### Company Insights
@@ -181,12 +206,17 @@ Multi-layer resolution with priority:
 - Existing spreadsheet sync (verified working)
 
 ### Chrome Extension (Manifest V3)
-- Content script extracts real profile cards from LinkedIn search pages
-- Background service worker with FIFO queue (one tab at a time)
-- Programmatic content script injection (handles pre-existing tabs)
-- React popup UI with queue management and backend health check
-- Updated 2025 LinkedIn DOM selectors with multiple fallbacks
-- Anti-spam: configurable delays, retry logic, deduplication
+- **Mode 1 — Quick Extract**: Scrapes visible LinkedIn search results and sends to the Lead Intelligence pipeline for email generation + validation
+- **Mode 2 — Deep Extract (1st-degree)**: Opens each 1st-degree connection profile, clicks "Contact Info", extracts the email directly from LinkedIn. Sends each email to the backend in real-time (instant dashboard updates)
+- Company detection from search results cards (reliable `"Current: Role at Company"` pattern)
+- Profile deduplication by URL and name+company combo
+- Global "STOP ALL" button to halt any running extraction immediately
+- Refresh button for hard-resetting extension state
+- Token auto-capture from dashboard localStorage (no manual paste needed)
+- Configurable delays (2.5-5.5s between profiles) to avoid LinkedIn detection
+- Side panel UI with live progress, emails found counter, and error display
+- Supports both localhost and production (Render) backends
+- Personal email detection (Gmail/Yahoo contacts get linked to their LinkedIn company, not email provider)
 
 ### Persistent Identity Assets
 - Resume manager: save multiple resumes with names, URLs, tags, default selection
@@ -463,14 +493,47 @@ The background worker uses `chrome.scripting.executeScript` to inject the conten
 ### Follow-Ups
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/outreach/follow-ups/schedule` | Schedule follow-ups |
-| POST | `/api/outreach/follow-ups/process` | Process due follow-ups |
-| GET | `/api/outreach/follow-ups` | List follow-ups |
+| POST | `/api/outreach/follow-ups/schedule` | Auto-schedule follow-ups for campaign |
+| POST | `/api/outreach/follow-ups/manual` | Schedule custom follow-up (threaded, with schedule picker) |
+| POST | `/api/outreach/follow-ups/process` | Process due follow-ups now |
+| POST | `/api/outreach/follow-ups/:id/cancel` | Cancel a scheduled follow-up |
+| POST | `/api/outreach/follow-ups/:id/send-now` | Send a follow-up immediately |
+| PATCH | `/api/outreach/follow-ups/:id` | Edit follow-up (subject, body, schedule) |
+| GET | `/api/outreach/follow-ups` | List follow-ups (filter by campaign, status) |
+
+### Scheduled Sends
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/outreach/scheduled-send` | Schedule non-threaded send to leads |
+| GET | `/api/outreach/scheduled-sends` | List pending scheduled sends |
+
+### Outreach Sessions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/outreach/sessions` | List grouped outreach sessions |
+| GET | `/api/outreach/sessions/:id` | Session details with leads + sent emails |
+
+### Sessions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/sessions` | List sessions (`?archived=true/false/all`) |
+| PATCH | `/api/sessions/:id` | Rename session |
+| PATCH | `/api/sessions/:id/archive` | Archive/unarchive |
+| DELETE | `/api/sessions/:id` | Delete session (cascade) |
+
+### Extension
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/leads/process` | Extension Mode 1: Quick Extract payload |
+| POST | `/api/extension/batch` | Extension Mode 2: Direct email import (1st-degree) |
+| POST | `/api/extension/stop-all` | Global stop: clear all validation queues |
+| GET | `/api/extension/ping` | Health check for extension connectivity |
+| GET | `/api/events/stream` | Server-Sent Events (real-time dashboard) |
 
 ### Webhooks
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/webhooks/resend` | Resend delivery events |
+| POST | `/api/webhooks/resend` | Resend delivery + reply events |
 | GET | `/api/webhooks/status` | Webhook stats + feature flags |
 
 ### Google Sheets
@@ -566,12 +629,31 @@ Vishwa Teja
 
 ## Follow-Up Automation
 
-### Flow
-1. Campaign sends initial email
-2. After N days (configurable), if no reply detected → follow-up scheduled
-3. Follow-up sent with threading headers (same Gmail thread)
-4. If reply detected → all follow-ups cancelled
-5. If bounced → lead removed from all queues
+### How Reply-Based Cancellation Works
+```
+You send email → recipient replies → Resend fires email.received webhook
+    → Backend matches sender to your outbound recipients
+    → Marks SentEmail as REPLIED
+    → Cancels ALL pending follow-ups for that lead
+    → Cancels ALL pending scheduled sends for that lead
+    → Updates LeadStatus to REPLIED
+    → Broadcasts reply:detected event → Dashboard updates live
+```
+
+### Scheduling Options
+| Code | Delay |
+|------|-------|
+| `1h` | 1 hour |
+| `6h` | 6 hours |
+| `1d` | 1 day |
+| `2d` | 2 days |
+| `3d` | 3 days |
+| `5d` | 5 days |
+| `1w` | 1 week |
+| `2w` | 2 weeks |
+| `15d` | 15 days |
+| `1m` | 30 days |
+| `custom` | Any ISO date |
 
 ### Threading
 ```javascript
@@ -580,6 +662,12 @@ headers: {
     'References': '<original_resend_id@resend.dev>'
 }
 ```
+
+### Safety Checks Before Sending
+1. Check `LeadStatus.replied` flag
+2. Check if any `SentEmail` to that lead has `status: REPLIED`
+3. If either is true → cancel the follow-up, don't send
+4. This double-check runs RIGHT BEFORE each send (not just at schedule time)
 
 ---
 

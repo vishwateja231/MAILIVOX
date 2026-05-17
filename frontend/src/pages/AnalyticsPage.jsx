@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { getVerificationStats, getSessionTrends, getRecruiterInsights, getCompanyBreakdown } from '../api';
+import { getVerificationStats, getSessionTrends, getRecruiterInsights, getCompanyBreakdown, getFollowUps, getOutreachStats } from '../api';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area } from 'recharts';
-import { Users, Shield, Building2, BarChart3, Zap } from 'lucide-react';
+import { Users, Shield, Building2, BarChart3, Zap, Send, CalendarClock, CheckCircle2, XCircle, Reply, Clock } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const PIE_COLORS = { VALID: '#10b981', INVALID: '#ef4444', RISKY: '#f59e0b', CATCH_ALL: '#f97316', PENDING: '#6b7280' };
@@ -176,6 +176,98 @@ export default function AnalyticsPage() {
                     <p className="text-gray-500 text-sm text-center py-10">No recruiter profiles detected yet. Process LinkedIn data containing recruiting roles to see intelligence here.</p>
                 )}
             </motion.div>
+
+            {/* Outreach & Follow-up Analytics */}
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="glass-card p-6">
+                <h3 className="font-semibold mb-4 flex items-center gap-2"><Send className="w-4 h-4 text-sky-400" /> Outreach & Follow-up Tracking</h3>
+                <OutreachAnalyticsSection />
+            </motion.div>
+        </div>
+    );
+}
+
+function OutreachAnalyticsSection() {
+    const [stats, setStats] = useState(null);
+    const [followUps, setFollowUps] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        Promise.all([
+            getOutreachStats().then(r => setStats(r.data)).catch(() => null),
+            getFollowUps({ limit: 20 }).then(r => setFollowUps(r.data || [])).catch(() => []),
+        ]).finally(() => setLoading(false));
+    }, []);
+
+    if (loading) return <p className="text-gray-500 text-sm text-center py-6">Loading outreach data...</p>;
+
+    const scheduled = followUps.filter(f => f.status === 'SCHEDULED');
+    const sent = followUps.filter(f => f.status === 'SENT');
+    const cancelled = followUps.filter(f => f.status === 'CANCELLED');
+
+    return (
+        <div className="space-y-4">
+            {/* Outreach stat cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <MiniStat icon={Send} label="Total Sent" value={stats?.totalSent || 0} color="text-sky-400" />
+                <MiniStat icon={CheckCircle2} label="Delivered" value={stats?.totalDelivered || 0} color="text-emerald-400" />
+                <MiniStat icon={Reply} label="Replied" value={stats?.totalReplied || 0} color="text-green-400" />
+                <MiniStat icon={XCircle} label="Bounced" value={stats?.totalBounced || 0} color="text-red-400" />
+            </div>
+
+            {/* Follow-up status */}
+            <div className="grid grid-cols-3 gap-3">
+                <div className="bg-surface/30 border border-amber-500/20 rounded-xl p-4 text-center">
+                    <CalendarClock className="w-5 h-5 text-amber-400 mx-auto mb-2" />
+                    <p className="text-2xl font-bold text-amber-400">{scheduled.length}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Scheduled</p>
+                </div>
+                <div className="bg-surface/30 border border-emerald-500/20 rounded-xl p-4 text-center">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400 mx-auto mb-2" />
+                    <p className="text-2xl font-bold text-emerald-400">{sent.length}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Sent</p>
+                </div>
+                <div className="bg-surface/30 border border-gray-500/20 rounded-xl p-4 text-center">
+                    <XCircle className="w-5 h-5 text-gray-400 mx-auto mb-2" />
+                    <p className="text-2xl font-bold text-gray-400">{cancelled.length}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-wider">Cancelled (replied)</p>
+                </div>
+            </div>
+
+            {/* Upcoming follow-ups list */}
+            {scheduled.length > 0 && (
+                <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Upcoming Follow-ups</p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {scheduled.slice(0, 8).map(f => (
+                            <div key={f.id} className="flex items-center justify-between bg-black/20 border border-white/5 rounded-lg px-3 py-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                    <span className="text-sm text-white truncate">{f.subject}</span>
+                                </div>
+                                <span className="text-xs text-gray-500 shrink-0 ml-2">
+                                    {new Date(f.scheduledFor).toLocaleDateString()} {new Date(f.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {!stats && followUps.length === 0 && (
+                <p className="text-gray-500 text-sm text-center py-6">No outreach data yet. Send your first campaign from the Outreach page.</p>
+            )}
+        </div>
+    );
+}
+
+function MiniStat({ icon: Icon, label, value, color }) {
+    return (
+        <div className="bg-surface/30 border border-white/5 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-1">
+                <Icon className={`w-3.5 h-3.5 ${color}`} />
+                <span className="text-[10px] text-gray-500 uppercase tracking-wider">{label}</span>
+            </div>
+            <p className="text-xl font-bold text-white">{value}</p>
         </div>
     );
 }

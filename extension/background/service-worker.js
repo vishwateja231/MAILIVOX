@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = 'http://localhost:3000';
+const DEFAULT_API_URL = 'https://mailivox-backend.onrender.com';
 
 let extractionState = {
   running: false,
@@ -80,12 +80,9 @@ async function storeCapturedToken(token) {
 
 async function ensureLocalDefaults() {
   const existing = await chrome.storage.local.get(['apiUrl', 'minDelayMs', 'maxDelayMs', 'maxDeepProfiles']);
-  const nextApiUrl = !existing.apiUrl || existing.apiUrl.includes('mailivox-backend.onrender.com')
-    ? DEFAULT_API_URL
-    : existing.apiUrl;
-
+  
   await chrome.storage.local.set({
-    apiUrl: nextApiUrl,
+    apiUrl: existing.apiUrl || DEFAULT_API_URL,
     minDelayMs: existing.minDelayMs || 2500,
     maxDelayMs: existing.maxDelayMs || 5500,
     maxDeepProfiles: existing.maxDeepProfiles || 50

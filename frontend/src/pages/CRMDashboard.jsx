@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, Mail, CheckCircle2, AlertTriangle, XCircle, Building2, Layers, ArrowUpRight, Clock, Shield, BarChart3, Zap } from 'lucide-react';
+import { Users, Mail, CheckCircle2, AlertTriangle, XCircle, Building2, Layers, ArrowUpRight, Clock, Shield, BarChart3, Zap, Send, Reply, CalendarClock, Ban } from 'lucide-react';
 import { getAnalytics } from '../api';
 import clsx from 'clsx';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -94,6 +94,16 @@ export default function CRMDashboard() {
                 <StatCard delay={0.6} label="Total Emails Gen." value={overview?.totalEmails} icon={Mail} color="from-pink-500 to-rose-500" />
                 <StatCard delay={0.65} label="Verification Rate" value={overview?.verificationRate !== undefined ? `${overview.verificationRate}%` : '—'} icon={Shield} color="from-cyan-500 to-blue-500" />
             </div>
+
+            {/* Outreach & Follow-up Stats */}
+            {overview?.outreach && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <StatCard delay={0.7} label="Emails Sent" value={overview.outreach.totalSent || 0} icon={Send} color="from-sky-500 to-blue-600" />
+                    <StatCard delay={0.75} label="Replies Received" value={overview.outreach.totalReplied || 0} icon={Reply} color="from-emerald-500 to-green-600" />
+                    <StatCard delay={0.8} label="Scheduled Follow-ups" value={overview.followUps?.scheduled || 0} icon={CalendarClock} color="from-amber-500 to-orange-600" />
+                    <StatCard delay={0.85} label="Follow-ups Cancelled" value={overview.followUps?.cancelled || 0} icon={Ban} color="from-slate-400 to-gray-600" />
+                </div>
+            )}
 
             {!hasData ? (
                 <EmptyState

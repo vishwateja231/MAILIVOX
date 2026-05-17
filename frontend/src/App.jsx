@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
-import { Users, BarChart3, LayoutDashboard, Building2, Layers, Bell, Search, Settings, PanelLeftClose, PanelLeft, Database, TerminalSquare, Send, Upload, LogOut, Puzzle } from 'lucide-react';
+import { Users, BarChart3, LayoutDashboard, Building2, Layers, Bell, Search, Settings, PanelLeftClose, PanelLeft, Database, TerminalSquare, Send, Upload, LogOut, Puzzle, CalendarClock } from 'lucide-react';
 import { Toaster } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
@@ -21,6 +21,7 @@ import ImportPage from './pages/ImportPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
 import ExtensionPage from './pages/ExtensionPage';
+import FollowUpsPage from './pages/FollowUpsPage';
 
 // ─── Landing page (lazy — only loaded for unauthenticated visitors) ──────────
 const LandingPage = lazy(() => import('./pages/landing/LandingPage'));
@@ -73,6 +74,7 @@ const NAV_ITEMS = [
         { to: '/engine', icon: TerminalSquare, label: 'Lead Intelligence' },
         { to: '/extension', icon: Puzzle, label: 'Extension' },
         { to: '/outreach', icon: Send, label: 'Outreach' },
+        { to: '/follow-ups', icon: CalendarClock, label: 'Follow-ups' },
         { to: '/import', icon: Upload, label: 'Import Data' },
         { to: '/sheets', icon: Database, label: 'Google Sheets' },
     ]},
@@ -207,6 +209,7 @@ function AppShell({ user, onLogout }) {
                             <Route path="/engine" element={<EnginePage />} />
                             <Route path="/extension" element={<ExtensionPage />} />
                             <Route path="/outreach" element={<OutreachPage />} />
+                            <Route path="/follow-ups" element={<FollowUpsPage />} />
                             <Route path="/import" element={<ImportPage />} />
                             <Route path="/leads" element={<LeadsPage />} />
                             <Route path="/companies" element={<CompaniesPage />} />

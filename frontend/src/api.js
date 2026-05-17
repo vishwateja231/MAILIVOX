@@ -218,6 +218,18 @@ export const validateAllEmails = (force = false) => axios.post(`${API}/api/outre
 export const scheduleFollowUps = (campaignId) => axios.post(`${API}/api/outreach/follow-ups/schedule`, { campaignId });
 export const processFollowUps = () => axios.post(`${API}/api/outreach/follow-ups/process`);
 export const getFollowUps = (params) => axios.get(`${API}/api/outreach/follow-ups`, { params });
+export const scheduleManualFollowUp = (data) => axios.post(`${API}/api/outreach/follow-ups/manual`, data);
+export const cancelFollowUp = (id) => axios.post(`${API}/api/outreach/follow-ups/${id}/cancel`);
+export const sendFollowUpNow = (id) => axios.post(`${API}/api/outreach/follow-ups/${id}/send-now`);
+export const editFollowUp = (id, data) => axios.patch(`${API}/api/outreach/follow-ups/${id}`, data);
+
+// ─── Scheduled Sends ─────────────────────────────────────────────────────────
+export const createScheduledSend = (data) => axios.post(`${API}/api/outreach/scheduled-send`, data);
+export const getScheduledSends = () => axios.get(`${API}/api/outreach/scheduled-sends`);
+
+// ─── Outreach Sessions ───────────────────────────────────────────────────────
+export const getOutreachSessions = (params) => axios.get(`${API}/api/outreach/sessions`, { params });
+export const getOutreachSession = (id) => axios.get(`${API}/api/outreach/sessions/${id}`);
 
 // ─── Import ───────────────────────────────────────────────────────────────────
 export const importFile = (file) => {

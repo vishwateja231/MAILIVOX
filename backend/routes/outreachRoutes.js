@@ -726,6 +726,246 @@ router.get('/outreach/follow-ups', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MANUAL FOLLOW-UP — Schedule a custom follow-up to specific sent emails
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// POST /outreach/follow-ups/manual
+// Schedule one or more follow-ups for specific previously-sent emails
+// Body: {
+//   sentEmailIds: ["abc", "def"],   // emails to follow up on
+//   subject: "Re: ..."  (optional, defaults to "Re: <original>"),
+//   body: "...",
+//   scheduleType: "1d" | "2d" | "3d" | "5d" | "1w" | "2w" | "15d" | "custom",
+//   customDate: "ISO string"  (only if scheduleType === "custom"),
+//   threaded: true | false   (true = reply in same thread)
+// }
+router.post('/outreach/follow-ups/manual', async (req, res) => {
+    try {
+        const { sentEmailIds, subject, body, scheduleType, customDate, threaded = true } = req.body || {};
+
+        if (!Array.isArray(sentEmailIds) || sentEmailIds.length === 0) {
+            return res.status(400).json({ error: 'sentEmailIds (array) is required' });
+        }
+        if (!body || typeof body !== 'string') {
+            return res.status(400).json({ error: 'body is required' });
+        }
+
+        // Resolve schedule date
+        const scheduledFor = resolveScheduleDate(scheduleType, customDate);
+        if (!scheduledFor) {
+            return res.status(400).json({ error: 'Invalid scheduleType or customDate' });
+        }
+
+        // Fetch original sent emails
+        const sentEmails = await prisma.sentEmail.findMany({
+            where: { id: { in: sentEmailIds } },
+            include: { lead: true },
+        });
+
+        if (sentEmails.length === 0) {
+            return res.status(404).json({ error: 'No matching sent emails found' });
+        }
+
+        // Group leads by their session to determine if we should reuse or create new session
+        const leadIds = sentEmails.map(s => s.leadId).filter(Boolean);
+        const uniqueLeadIds = [...new Set(leadIds)];
+
+        const created = [];
+        for (const sent of sentEmails) {
+            const finalSubject = (subject && subject.trim()) || `Re: ${sent.subject}`;
+            const followUp = await prisma.followUp.create({
+                data: {
+                    campaignId: sent.campaignId || null,
+                    leadId: sent.leadId || '',
+                    sentEmailId: sent.id,
+                    subject: finalSubject,
+                    body,
+                    scheduledFor,
+                    status: 'SCHEDULED',
+                },
+            });
+            created.push(followUp);
+        }
+
+        broadcast('followup:scheduled', { count: created.length, scheduledFor });
+        res.json({ ok: true, scheduled: created.length, scheduledFor, followUps: created });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /outreach/follow-ups/:id/cancel
+router.post('/outreach/follow-ups/:id/cancel', async (req, res) => {
+    try {
+        const followUp = await prisma.followUp.update({
+            where: { id: req.params.id },
+            data: { status: 'CANCELLED' },
+        });
+        broadcast('followup:cancelled', { id: followUp.id });
+        res.json({ ok: true, followUp });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /outreach/follow-ups/:id/send-now
+router.post('/outreach/follow-ups/:id/send-now', async (req, res) => {
+    try {
+        await prisma.followUp.update({
+            where: { id: req.params.id },
+            data: { scheduledFor: new Date() },
+        });
+        // Trigger immediate processing
+        const { processDueFollowUps } = require('../services/mail/followUpProcessor');
+        const result = await processDueFollowUps();
+        res.json({ ok: true, ...result });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /outreach/follow-ups/:id — edit scheduled follow-up
+router.patch('/outreach/follow-ups/:id', async (req, res) => {
+    try {
+        const { subject, body, scheduleType, customDate } = req.body || {};
+        const data = {};
+        if (subject !== undefined) data.subject = subject;
+        if (body !== undefined) data.body = body;
+        if (scheduleType !== undefined) {
+            const scheduledFor = resolveScheduleDate(scheduleType, customDate);
+            if (scheduledFor) data.scheduledFor = scheduledFor;
+        }
+        const followUp = await prisma.followUp.update({
+            where: { id: req.params.id },
+            data,
+        });
+        res.json({ ok: true, followUp });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHEDULED SEND (non-threaded delayed send to NEW recipients)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// POST /outreach/scheduled-send
+// Body: {
+//   leadIds: [...],
+//   subject, body,
+//   scheduleType, customDate,
+//   templateUsed?
+// }
+router.post('/outreach/scheduled-send', async (req, res) => {
+    try {
+        const { leadIds, subject, body, scheduleType, customDate, templateUsed } = req.body || {};
+
+        if (!Array.isArray(leadIds) || leadIds.length === 0) {
+            return res.status(400).json({ error: 'leadIds is required' });
+        }
+        if (!subject || !body) {
+            return res.status(400).json({ error: 'subject and body required' });
+        }
+
+        const scheduledFor = resolveScheduleDate(scheduleType, customDate);
+        if (!scheduledFor) {
+            return res.status(400).json({ error: 'Invalid schedule' });
+        }
+
+        // Fetch leads with their primary verified emails
+        const leads = await prisma.lead.findMany({
+            where: { id: { in: leadIds } },
+            include: {
+                emails: {
+                    where: { OR: [{ isPrimary: true }, { verificationStatus: 'VALID' }] },
+                    orderBy: [{ isPrimary: 'desc' }, { confidence: 'asc' }],
+                    take: 1,
+                },
+            },
+        });
+
+        const queueJobs = [];
+        for (const lead of leads) {
+            const email = lead.emails[0];
+            if (!email) continue;
+            const job = await prisma.emailQueueJob.create({
+                data: {
+                    leadId: lead.id,
+                    toEmail: email.email,
+                    toName: lead.fullName,
+                    subject,
+                    htmlBody: body,
+                    textBody: body.replace(/<[^>]*>/g, ''),
+                    templateUsed: templateUsed || null,
+                    scheduledFor,
+                    status: 'PENDING',
+                },
+            });
+            queueJobs.push(job);
+        }
+
+        broadcast('scheduled_send:created', { count: queueJobs.length, scheduledFor });
+        res.json({ ok: true, scheduled: queueJobs.length, scheduledFor });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /outreach/scheduled-sends — List pending scheduled sends
+router.get('/outreach/scheduled-sends', async (req, res) => {
+    try {
+        const jobs = await prisma.emailQueueJob.findMany({
+            where: { status: 'PENDING', scheduledFor: { gt: new Date() } },
+            orderBy: { scheduledFor: 'asc' },
+            take: 100,
+        });
+        res.json(jobs);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OUTREACH SESSIONS (groups of sent emails)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /outreach/sessions — list outreach (send) sessions
+router.get('/outreach/sessions', async (req, res) => {
+    try {
+        const { listOutreachSessions } = require('../services/outreach/outreachSessionManager');
+        const sessions = await listOutreachSessions({ limit: Number(req.query.limit) || 50 });
+        res.json(sessions);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /outreach/sessions/:id — outreach session details
+router.get('/outreach/sessions/:id', async (req, res) => {
+    try {
+        const { getOutreachSessionDetails } = require('../services/outreach/outreachSessionManager');
+        const details = await getOutreachSessionDetails(req.params.id);
+        if (!details) return res.status(404).json({ error: 'Session not found' });
+        res.json(details);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Helper: resolve schedule date ───────────────────────────────────────────
+function resolveScheduleDate(scheduleType, customDate) {
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    const map = {
+        '1h': 60 * 60 * 1000,
+        '6h': 6 * 60 * 60 * 1000,
+        '1d': day,
+        '2d': 2 * day,
+        '3d': 3 * day,
+        '5d': 5 * day,
+        '1w': 7 * day,
+        '2w': 14 * day,
+        '15d': 15 * day,
+        '1m': 30 * day,
+    };
+    if (scheduleType === 'now') return new Date(now);
+    if (scheduleType === 'custom') {
+        if (!customDate) return null;
+        const d = new Date(customDate);
+        if (isNaN(d.getTime())) return null;
+        return d;
+    }
+    const offset = map[scheduleType];
+    return offset ? new Date(now + offset) : null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // DEBUG — Test Reply-To routing
 // ═══════════════════════════════════════════════════════════════════════════════
 

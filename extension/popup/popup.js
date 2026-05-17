@@ -1,5 +1,5 @@
-const DEFAULT_API_URL = 'http://localhost:3000';
-const DASHBOARD_URL = 'http://localhost:5173';
+const DEFAULT_API_URL = 'https://mailivox-backend.onrender.com';
+const DASHBOARD_URL = 'https://mailivox.vercel.app';
 
 const els = {
   pageLabel: document.getElementById('pageLabel'),
@@ -144,12 +144,7 @@ async function refreshCurrentTabContext() {
 
 async function getSettings() {
   const stored = await chrome.storage.local.get(['apiUrl']);
-  const apiUrl = !stored.apiUrl || stored.apiUrl.includes('mailivox-backend.onrender.com')
-    ? DEFAULT_API_URL
-    : stored.apiUrl;
-  if (apiUrl !== stored.apiUrl) {
-    await chrome.storage.local.set({ apiUrl });
-  }
+  const apiUrl = stored.apiUrl || DEFAULT_API_URL;
   return { apiUrl };
 }
 

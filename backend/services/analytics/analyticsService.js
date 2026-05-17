@@ -5,7 +5,7 @@
 const prisma = require('../db/prismaClient');
 
 async function getOverviewStats() {
-    const [totalLeads, totalSessions, totalCompanies, totalEmails, emailStats, totalExports] = await Promise.all([
+    const [totalLeads, totalSessions, totalCompanies, totalEmails, emailStats, totalExports, outreachStats] = await Promise.all([
         prisma.lead.count(),
         prisma.session.count(),
         prisma.company.count(),
@@ -15,6 +15,7 @@ async function getOverviewStats() {
             _count: { verificationStatus: true }
         }),
         prisma.sheetExport.count({ where: { status: 'SUCCESS' } }),
+        getOutreachOverviewStats(),
     ]);
 
     const emailMap = {};
@@ -45,7 +46,51 @@ async function getOverviewStats() {
         verificationRate,
         recruiterCount,
         totalExports,
+        ...outreachStats,
     };
+}
+
+/**
+ * Get outreach & follow-up stats for the dashboard.
+ */
+async function getOutreachOverviewStats() {
+    try {
+        const [
+            totalSent, totalDelivered, totalBounced, totalReplied,
+            scheduledFollowUps, sentFollowUps, cancelledFollowUps,
+            pendingQueueJobs
+        ] = await Promise.all([
+            prisma.sentEmail.count(),
+            prisma.sentEmail.count({ where: { status: 'DELIVERED' } }),
+            prisma.sentEmail.count({ where: { status: 'BOUNCED' } }),
+            prisma.sentEmail.count({ where: { status: 'REPLIED' } }),
+            prisma.followUp.count({ where: { status: 'SCHEDULED' } }),
+            prisma.followUp.count({ where: { status: 'SENT' } }),
+            prisma.followUp.count({ where: { status: 'CANCELLED' } }),
+            prisma.emailQueueJob.count({ where: { status: 'PENDING' } }),
+        ]);
+
+        return {
+            outreach: {
+                totalSent,
+                totalDelivered,
+                totalBounced,
+                totalReplied,
+                deliveryRate: totalSent > 0 ? Math.round((totalDelivered / totalSent) * 100) : 0,
+                replyRate: totalSent > 0 ? Math.round((totalReplied / totalSent) * 100) : 0,
+            },
+            followUps: {
+                scheduled: scheduledFollowUps,
+                sent: sentFollowUps,
+                cancelled: cancelledFollowUps,
+            },
+            queue: {
+                pending: pendingQueueJobs,
+            },
+        };
+    } catch (e) {
+        return { outreach: {}, followUps: {}, queue: {} };
+    }
 }
 
 async function getVerificationBreakdown() {

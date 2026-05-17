@@ -1,9 +1,11 @@
 const DEFAULTS = {
-  apiUrl: 'http://localhost:3000',
+  apiUrl: 'https://mailivox-backend.onrender.com',
   minDelayMs: 2500,
   maxDelayMs: 5500,
   maxDeepProfiles: 50
 };
+
+const DASHBOARD_URL = 'https://mailivox.vercel.app';
 
 const fields = {
   apiUrl: document.getElementById('apiUrl'),
@@ -17,7 +19,7 @@ const fields = {
 document.addEventListener('DOMContentLoaded', loadSettings);
 document.getElementById('saveBtn').addEventListener('click', saveSettings);
 document.getElementById('dashboardBtn').addEventListener('click', () => {
-  chrome.tabs.create({ url: 'http://localhost:5173' });
+  chrome.tabs.create({ url: DASHBOARD_URL });
 });
 
 async function loadSettings() {
@@ -29,9 +31,7 @@ async function loadSettings() {
     'maxDeepProfiles'
   ]);
 
-  fields.apiUrl.value = !stored.apiUrl || stored.apiUrl.includes('mailivox-backend.onrender.com')
-    ? DEFAULTS.apiUrl
-    : stored.apiUrl;
+  fields.apiUrl.value = stored.apiUrl || DEFAULTS.apiUrl;
   fields.token.value = stored.mailivox_token || '';
   fields.minDelayMs.value = stored.minDelayMs || DEFAULTS.minDelayMs;
   fields.maxDelayMs.value = stored.maxDelayMs || DEFAULTS.maxDelayMs;
