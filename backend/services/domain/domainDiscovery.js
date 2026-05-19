@@ -182,27 +182,103 @@ async function discoverDomain(opts) {
     }
 
     // ── Layer 5: External discovery (Clearbit) ───────────────────────────────
-    if (company) {
+    if (company && isValidCompanyForLookup(company)) {
         const domain = await findDomain(company);
-        if (domain) {
+        if (domain && isReasonableDomainMatch(company, domain)) {
             return { domain, source: 'clearbit', confidence: 'MEDIUM', pattern: null };
         }
     }
 
     // ── Layer 6: Smart fallback heuristics ───────────────────────────────────
-    if (company) {
+    // Only attempt heuristics for multi-word company names or well-known short names
+    if (company && isValidCompanyForLookup(company)) {
         const slug = company.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const fallbacks = [`${slug}.com`, `${slug}.ai`, `${slug}.io`, `${slug}.co`];
-
-        for (const candidate of fallbacks) {
-            const hasMX = await verifyMX(candidate);
-            if (hasMX) {
-                return { domain: candidate, source: 'heuristic', confidence: 'LOW', pattern: null };
+        // Don't try heuristics for very short slugs (likely person names)
+        if (slug.length >= 4) {
+            const fallbacks = [`${slug}.com`];
+            for (const candidate of fallbacks) {
+                const hasMX = await verifyMX(candidate);
+                if (hasMX) {
+                    return { domain: candidate, source: 'heuristic', confidence: 'LOW', pattern: null };
+                }
             }
         }
     }
 
     return { domain: null, source: 'not_found', confidence: 'NONE', pattern: null };
+}
+
+/**
+ * Check if a company name is valid for domain lookup.
+ * Rejects names that are likely person names or too vague.
+ */
+function isValidCompanyForLookup(company) {
+    if (!company) return false;
+    const lower = company.toLowerCase().trim();
+    
+    // Must be at least 2 characters
+    if (lower.length < 2) return false;
+    
+    // Single-word names under 5 chars that could be person names — skip
+    const words = lower.split(/\s+/);
+    if (words.length === 1 && lower.length < 5) return false;
+    
+    // Common Indian last names / first names that get mistaken for companies
+    const personNames = new Set([
+        'kumar', 'singh', 'sharma', 'gupta', 'patel', 'reddy', 'rao', 'nair',
+        'mishra', 'jain', 'agarwal', 'verma', 'yadav', 'chauhan', 'pandey',
+        'sangam', 'kalyani', 'navudu', 'chiliveri', 'chikkula', 'sahay',
+        'saha', 'raza', 'ahmad', 'khan', 'ali', 'ansari', 'shaikh',
+        'john', 'smith', 'doe', 'james', 'david', 'michael', 'robert',
+        'unknown', 'none', 'na', 'nil', 'null', 'undefined',
+    ]);
+    if (personNames.has(lower)) return false;
+    if (words.length === 1 && personNames.has(words[0])) return false;
+    
+    // If it matches common "Unknown" variants
+    if (/^(unknown|not\s*specified|n\/?a|none|—|-|–)$/i.test(lower)) return false;
+    
+    return true;
+}
+
+/**
+ * Check if a Clearbit domain result is reasonable for the given company name.
+ * Prevents "Sangam" → sangam.com (unrelated jewelry company).
+ */
+function isReasonableDomainMatch(company, domain) {
+    if (!company || !domain) return false;
+    
+    const companySlug = company.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const domainBase = domain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    // The domain should contain a significant portion of the company name
+    // OR the company name should contain the domain base
+    if (domainBase.includes(companySlug) || companySlug.includes(domainBase)) return true;
+    
+    // For multi-word companies, check if any word matches
+    const words = company.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    if (words.some(w => domainBase.includes(w))) return true;
+    
+    // If the domain is completely unrelated to the company name, reject it
+    // This prevents "Sangam" → "sangamwedding.com" type matches
+    // Only accept if the domain base is AT LEAST 60% similar
+    const similarity = longestCommonSubstring(companySlug, domainBase);
+    if (similarity >= companySlug.length * 0.6) return true;
+    
+    return false;
+}
+
+function longestCommonSubstring(s1, s2) {
+    if (!s1 || !s2) return 0;
+    let max = 0;
+    for (let i = 0; i < s1.length; i++) {
+        for (let j = 0; j < s2.length; j++) {
+            let k = 0;
+            while (i + k < s1.length && j + k < s2.length && s1[i + k] === s2[j + k]) k++;
+            if (k > max) max = k;
+        }
+    }
+    return max;
 }
 
 module.exports = {

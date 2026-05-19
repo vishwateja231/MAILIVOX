@@ -22,6 +22,8 @@ const JUNK_PATTERNS = [
     /^(are these results helpful|did you find)/i,
     /^(upgrade|premium|try|start|get|buy|subscribe)/i,
     /^(accept|decline|ignore|remove|block|report)/i,
+    /\b(are mutual|is connected|mutual connection|people also viewed)\b/i,
+    /\s+(is|are|was|were)$/i, // Trailing verbs (LinkedIn fragments)
     /^[\W\d]+$/, // Only symbols/numbers
     /^.{1,2}$/, // Too short
     /^.{80,}$/, // Too long for a name

@@ -180,8 +180,8 @@
     
     return {
       fullName,
-      role: role || '',
-      company: cleanCompany(company),
+      role: (role && role.toLowerCase() !== fullName.toLowerCase()) ? role : '',
+      company: cleanCompany(company, fullName),
       location,
       linkedinUrl: url,
       connectionDegree: degree,
@@ -208,15 +208,21 @@
     return n;
   }
 
-  function cleanCompany(name) {
+  function cleanCompany(name, fullName) {
     if (!name) return '';
-    return name
+    let c = name
       .replace(/\s+/g, ' ')
       .replace(/\s*[·•|].*$/, '')
       .replace(/\s*-\s*.*$/, '')
       .replace(/[^a-zA-Z0-9\s&.\-']/g, '')
       .trim()
       .slice(0, 60);
+    // If company name is same as the person's name, it's a parsing error
+    if (c && fullName && c.toLowerCase() === fullName.toLowerCase()) return '';
+    // If company is a single common person-name word, reject it
+    const personWords = ['kumar','singh','sharma','gupta','patel','reddy','rao','nair','yadav','sangam','navudu','saha','raza','khan'];
+    if (personWords.includes(c.toLowerCase())) return '';
+    return c;
   }
 
   function isLocationLine(line) {

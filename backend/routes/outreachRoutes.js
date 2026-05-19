@@ -632,9 +632,10 @@ router.post('/outreach/validate-lead', async (req, res) => {
             });
         }
         
-        const { validateLeadEmails } = require('../services/validation/bulkValidator');
-        const result = await validateLeadEmails(leadId, { skipSmtp });
-        res.json(result);
+        // Use CheckMail API queue for accurate validation
+        const { enqueueLeadEmails } = require('../services/validation/validationQueue');
+        await enqueueLeadEmails(leadId);
+        res.json({ ok: true, message: 'Validation queued via CheckMail API' });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -655,9 +656,13 @@ router.post('/outreach/validate-session', async (req, res) => {
             }
         }
         
-        const { validateSession } = require('../services/validation/bulkValidator');
-        const result = await validateSession(sessionId, { skipSmtp });
-        res.json(result);
+        // Use CheckMail API queue for accurate validation
+        const { enqueueLeadEmails } = require('../services/validation/validationQueue');
+        const leads = await prisma.lead.findMany({ where: { sessionId }, select: { id: true } });
+        for (const lead of leads) {
+            await enqueueLeadEmails(lead.id);
+        }
+        res.json({ ok: true, message: `Validation queued for ${leads.length} leads via CheckMail API` });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

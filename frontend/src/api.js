@@ -88,6 +88,7 @@ export const getCompany = (id) => axios.get(`${API}/api/companies/${id}`);
 export const getSessions = (params) => axios.get(`${API}/api/sessions`, { params });
 export const getSession = (id) => axios.get(`${API}/api/sessions/${id}`);
 export const deleteSession = (id) => axios.delete(`${API}/api/sessions/${id}`);
+export const bulkDeleteSessions = (ids) => axios.post(`${API}/api/sessions/bulk-delete`, { ids });
 export const archiveSession = (id, isArchived = true) => axios.patch(`${API}/api/sessions/${id}/archive`, { isArchived });
 export const renameSession = (id, sessionName) => axios.patch(`${API}/api/sessions/${id}`, { sessionName });
 

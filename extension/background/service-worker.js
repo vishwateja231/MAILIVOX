@@ -41,7 +41,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ started: false, error: 'Extraction already running' });
       return false;
     }
-    handleMode1(msg.profiles || [], msg.searchUrl || '');
+    handleMode1(msg.profiles || [], msg.searchUrl || '', msg.companyOverride || null);
     sendResponse({ started: true });
     return false;
   }
@@ -99,7 +99,7 @@ async function configureSidePanel() {
   }
 }
 
-async function handleMode1(profiles, searchUrl) {
+async function handleMode1(profiles, searchUrl, companyOverride = null) {
   extractionState = freshState(1, profiles.length);
   notify('progressUpdate');
 
@@ -112,6 +112,7 @@ async function handleMode1(profiles, searchUrl) {
     const body = {
       rawText,
       sessionName: `Chrome Quick Extract ${new Date().toLocaleString()}`,
+      companyOverride: companyOverride || undefined,
       excludeInterns: true,
       excludeFreshers: false
     };
@@ -155,7 +156,7 @@ function profilesToLeadIntelligenceText(profiles) {
     .map(profile => {
       const company = cleanBlockLine(profile.company);
       const role = cleanBlockLine(profile.role);
-      const headline = buildLeadIntelligenceHeadline(role, company);
+      const headline = buildLeadIntelligenceHeadline(role, company, cleanBlockLine(profile.fullName));
       const lines = [
         cleanBlockLine(profile.fullName),
         headline,
@@ -169,12 +170,15 @@ function profilesToLeadIntelligenceText(profiles) {
     .join('\n\n');
 }
 
-function buildLeadIntelligenceHeadline(role, company) {
-  if (role && company && !role.toLowerCase().includes(company.toLowerCase())) {
-    return `Role: ${role} at ${company}`;
+function buildLeadIntelligenceHeadline(role, company, fullName) {
+  // Don't use role if it's the same as the person's name (parsing error)
+  const cleanRole = (role && fullName && role.toLowerCase() === fullName.toLowerCase()) ? '' : role;
+  
+  if (cleanRole && company && !cleanRole.toLowerCase().includes(company.toLowerCase())) {
+    return `Role: ${cleanRole} at ${company}`;
   }
-  if (role) return `Role: ${role}`;
-  if (company) return `Role: Employee at ${company}`;
+  if (cleanRole) return `Role: ${cleanRole}`;
+  if (company) return `Company: ${company}`;
   return '';
 }
 

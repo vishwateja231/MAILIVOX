@@ -250,11 +250,14 @@ async function startQuickExtract() {
     return;
   }
   
-  setMessage(`Sending ${detectedProfiles.length} visible profiles to Lead Intelligence...`);
+  const companyOverride = (document.getElementById('companyOverride')?.value || '').trim();
+  
+  setMessage(`Sending ${detectedProfiles.length} profiles${companyOverride ? ` (company: ${companyOverride})` : ''}...`);
   await sendRuntimeMessage({
     action: 'startMode1',
     profiles: detectedProfiles,
-    searchUrl: activeTab?.url || ''
+    searchUrl: activeTab?.url || '',
+    companyOverride: companyOverride || null
   });
   await refreshStatus();
 }

@@ -13,7 +13,7 @@
 
 const { getPatternScore } = require('../generator');
 const { validateSyntax, getMxHost, detectProvider, isEnterpriseProvider } = require('./validationEngine');
-const { getCurrentKey, recordUsage } = require('./keyManager');
+const { getCurrentKey, markKeyExhausted, recordUsage } = require('./keyManager');
 const prisma = require('../db/prismaClient');
 const { broadcast } = require('../eventBus');
 
@@ -21,20 +21,26 @@ const { broadcast } = require('../eventBus');
 
 let queue = [];           // Array of { emailId, email, pattern, tier, leadId }
 let isProcessing = false;
+let isStopped = false;    // Global kill switch — prevents re-enqueuing
 let totalProcessed = 0;
 let totalValid = 0;
 let totalInvalid = 0;
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
-const CONCURRENCY = 3;
-const DELAY_BETWEEN_MS = 300;        // 300ms between batches (respect API rate limits)
+const CONCURRENCY = 2;               // Process 2 at a time (reduced to avoid rate limits)
+const DELAY_BETWEEN_MS = 1000;       // 1 second between batches (CheckMail rate limit safe)
+const MAX_RETRIES_429 = 3;           // Max retries on rate limit before skipping
+
+// Rate limiter state
+let rateLimitBackoff = 0;            // Current backoff in ms (0 = no backoff)
+let consecutive429s = 0;             // Track consecutive rate limit hits
 
 // Early-stop logic: stop validating a lead's remaining emails once we have enough valid ones
-// Saves credits when many patterns are generated per lead (e.g., 18 patterns → stop after 2-3 valid)
-const MAX_VALID_PER_LEAD = 3;        // Stop after acquiring this many valid emails for a lead
-const MIN_VALID_FOR_FEW = 1;         // If lead has very few patterns (≤5), stop after just 1 valid
-const FEW_PATTERNS_THRESHOLD = 5;    // What counts as "few patterns" per lead
+// Saves credits when many patterns are generated per lead
+const MAX_VALID_PER_LEAD = 2;        // Stop after acquiring 2 valid emails per lead
+const MIN_VALID_FOR_FEW = 1;         // If lead has very few patterns (≤3), stop after 1 valid
+const FEW_PATTERNS_THRESHOLD = 3;    // What counts as "few patterns" per lead
 
 // Track how many valid emails we've found per lead in this run
 const leadValidCount = new Map();    // leadId → count of valid emails found
@@ -48,6 +54,7 @@ const leadTotalGenerated = new Map(); // leadId → total emails generated
  */
 function enqueue(emails) {
     if (!Array.isArray(emails) || emails.length === 0) return;
+    if (isStopped) return; // Kill switch active — don't accept new work
     queue.push(...emails);
     // Start processing if not already running
     if (!isProcessing) {
@@ -57,26 +64,27 @@ function enqueue(emails) {
 
 /**
  * Add a single lead's emails to the queue by leadId.
- * Fetches pending emails from DB and enqueues them.
+ * TIERED: Only validates top 3 patterns. Saves credits.
  */
 async function enqueueLeadEmails(leadId) {
+    if (isStopped) return;
     try {
         const emails = await prisma.generatedEmail.findMany({
             where: { leadId, verificationStatus: { in: ['PENDING', 'UNVERIFIED'] } },
             select: { id: true, email: true, pattern: true, leadId: true, confidence: true },
-            orderBy: { confidence: 'asc' }, // HIGH first (alphabetically: HIGH < LOW < MEDIUM, fix below)
         });
-        if (emails.length > 0) {
-            // Sort by confidence (HIGH > MEDIUM > LOW > INVALID) so we validate the best first
-            const confidenceOrder = { HIGH: 0, MEDIUM: 1, LOW: 2, INVALID: 3 };
-            emails.sort((a, b) => (confidenceOrder[a.confidence] ?? 9) - (confidenceOrder[b.confidence] ?? 9));
-            
-            // Track total generated for early-stop logic
-            leadTotalGenerated.set(leadId, emails.length);
-            leadValidCount.set(leadId, 0);
-            
-            enqueue(emails.map(e => ({ emailId: e.id, email: e.email, pattern: e.pattern, tier: 'A', leadId: e.leadId })));
-        }
+        if (emails.length === 0) return;
+
+        // Sort best-first
+        const confidenceOrder = { HIGH: 0, MEDIUM: 1, LOW: 2, PENDING: 3, INVALID: 9 };
+        emails.sort((a, b) => (confidenceOrder[a.confidence] ?? 5) - (confidenceOrder[b.confidence] ?? 5));
+
+        // Only queue top 3 (Tier 1). Rest stay PENDING until user forces.
+        const tier1 = emails.slice(0, 3);
+        leadTotalGenerated.set(leadId, tier1.length);
+        leadValidCount.set(leadId, 0);
+
+        enqueue(tier1.map(e => ({ emailId: e.id, email: e.email, pattern: e.pattern, tier: 'A', leadId: e.leadId })));
     } catch (e) {
         console.error('[validationQueue] enqueueLeadEmails error:', e.message);
     }
@@ -87,7 +95,16 @@ async function enqueueLeadEmails(leadId) {
  * Called on server startup.
  */
 async function enqueueAllPending() {
+    if (isStopped) return; // Respect kill switch
     try {
+        // Log available keys on startup for diagnostics
+        const keyData = await getCurrentKey();
+        if (keyData) {
+            console.log(`[validationQueue] Active key available: ...${keyData.key.slice(-8)}`);
+        } else {
+            console.log('[validationQueue] WARNING: No active API keys found. Add keys in Settings.');
+        }
+
         const pending = await prisma.generatedEmail.findMany({
             where: { verificationStatus: { in: ['PENDING', 'UNVERIFIED'] } },
             select: { id: true, email: true, pattern: true, leadId: true },
@@ -124,10 +141,20 @@ function getStats() {
 function clearQueue() {
     const cleared = queue.length;
     queue = [];
+    isStopped = true; // Kill switch — prevents re-enqueuing
+    isProcessing = false;
     leadValidCount.clear();
     leadTotalGenerated.clear();
-    console.log(`[validationQueue] Globally cleared ${cleared} pending validations`);
+    console.log(`[validationQueue] Globally cleared ${cleared} pending validations — STOPPED`);
     return cleared;
+}
+
+/**
+ * Resume the queue (allows new enqueues after a stop).
+ */
+function resumeQueue() {
+    isStopped = false;
+    console.log('[validationQueue] Resumed — accepting new validations');
 }
 
 // ─── Domain Status Cache (skip domains where all emails are invalid) ─────────
@@ -137,11 +164,12 @@ const domainStatus = new Map(); // domain → { valid: 0, invalid: 0, checked: b
 
 async function processQueue() {
     if (isProcessing) return;
+    if (isStopped) return;
+    
     isProcessing = true;
-
     console.log('[validationQueue] Processing ' + queue.length + ' emails via CheckMail API');
 
-    while (queue.length > 0) {
+    while (queue.length > 0 && !isStopped) {
         // Take a batch
         const batch = queue.splice(0, CONCURRENCY);
 
@@ -155,28 +183,49 @@ async function processQueue() {
             broadcast('validation:progress', { totalProcessed, totalValid, totalInvalid, pending: queue.length });
         }
 
-        // Delay between batches (respect API rate limits)
+        // Rate limit delay — uses backoff if we've been rate limited
         if (queue.length > 0) {
-            await new Promise(r => setTimeout(r, DELAY_BETWEEN_MS));
+            const delay = rateLimitBackoff > 0 ? rateLimitBackoff : DELAY_BETWEEN_MS;
+            await new Promise(r => setTimeout(r, delay));
         }
     }
 
     isProcessing = false;
     console.log('[validationQueue] Done: ' + totalProcessed + ' processed, ' + totalValid + ' valid, ' + totalInvalid + ' invalid');
 
-    // Clean up per-lead tracking after each batch run (saves memory)
+    // Tier 2: If any leads got 0 valid from Tier 1, queue more patterns
+    if (!isStopped) {
+        const hasCredits = await getCurrentKey();
+        if (hasCredits) {
+            for (const [leadId, validCount] of leadValidCount.entries()) {
+                if (validCount === 0 && !isStopped) {
+                    try {
+                        const remaining = await prisma.generatedEmail.findMany({
+                            where: { leadId, verificationStatus: 'PENDING' },
+                            select: { id: true, email: true, pattern: true, leadId: true },
+                            take: 4,
+                        });
+                        if (remaining.length > 0) {
+                            console.log(`[validationQueue] Tier 2: queuing ${remaining.length} more for lead (Tier 1 had 0 valid)`);
+                            queue.push(...remaining.map(e => ({ emailId: e.id, email: e.email, pattern: e.pattern, tier: 'B', leadId: e.leadId })));
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            // Process Tier 2 if items were added
+            if (queue.length > 0 && !isStopped) {
+                leadValidCount.clear();
+                leadTotalGenerated.clear();
+                setImmediate(() => processQueue());
+                return;
+            }
+        }
+    }
+
+    // Clean up
     leadValidCount.clear();
     leadTotalGenerated.clear();
-
-    // Check for more pending emails every 30 seconds
-    setTimeout(async () => {
-        const count = await prisma.generatedEmail.count({
-            where: { verificationStatus: { in: ['PENDING', 'UNVERIFIED'] } },
-        }).catch(() => 0);
-        if (count > 0) {
-            await enqueueAllPending();
-        }
-    }, 30000);
 }
 
 async function validateOne(item) {
@@ -229,20 +278,25 @@ async function validateOne(item) {
         }
 
         // Layer 3: Real verification via CheckMail API (SMTP-level check)
-        const apiKey = getCurrentKey();
-        if (apiKey) {
+        const keyData = await getCurrentKey();
+        if (keyData) {
+            console.log(`[validationQueue] Verifying ${email} with key ${keyData.id.slice(-6)}`);
             try {
                 const response = await fetch(
                     `https://api.checkmail.dev/v1/verify?email=${encodeURIComponent(email)}`,
-                    { headers: { 'Authorization': `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15000) }
+                    { headers: { 'Authorization': `Bearer ${keyData.key}` }, signal: AbortSignal.timeout(15000) }
                 );
                 
                 if (response.ok) {
                     const data = await response.json();
                     
-                    // Only charge for definitive results (valid, invalid, catch_all, disposable)
+                    // Successful response — reset rate limit backoff
+                    consecutive429s = 0;
+                    rateLimitBackoff = 0;
+                    
+                    // Record usage against the EXACT key that was used
                     if (data.status !== 'unknown') {
-                        recordUsage(1);
+                        recordUsage(keyData.id, 1);
                     }
                     
                     // Track domain stats
@@ -264,18 +318,16 @@ async function validateOne(item) {
                         // If 3+ invalids on this domain, mark remaining as invalid too (save credits)
                         if (dstat.invalid >= 3 && dstat.valid === 0) {
                             console.log('[validationQueue] Domain ' + domain + ' has 3+ invalid — skipping remaining');
-                            // Mark all remaining emails for this domain in the queue as invalid
                             const remaining = queue.filter(q => q.email.endsWith('@' + domain));
                             for (const r of remaining) {
                                 await updateEmailStatus(r.emailId, 'INVALID', 'INVALID', 'Domain rejects all tested emails');
                                 totalInvalid++;
                             }
-                            // Remove them from queue
                             queue = queue.filter(q => !q.email.endsWith('@' + domain));
                         }
                         return;
                     } else if (data.status === 'catch_all') {
-                        dstat.valid++; // Catch-all means domain accepts, treat as potentially valid
+                        dstat.valid++;
                         const patternScore = getPatternScore(pattern, tier || 'A');
                         if (patternScore >= 70) {
                             await updateEmailStatus(emailId, 'MEDIUM', 'VALID', 'Catch-all domain + strong pattern — likely valid');
@@ -290,14 +342,40 @@ async function validateOne(item) {
                         totalInvalid++;
                         return;
                     } else {
-                        // 'unknown' — rate limited, retry later (free)
+                        // 'unknown' — rate limited or inconclusive
                         await updateEmailStatus(emailId, 'LOW', 'PENDING', 'Verification inconclusive — will retry');
                         return;
                     }
                 } else if (response.status === 402) {
-                    console.warn('[validationQueue] CheckMail credits exhausted');
-                    // Mark remaining as PENDING
-                    await updateEmailStatus(emailId, 'MEDIUM', 'PENDING', 'Verification credits exhausted — unverified');
+                    // Key exhausted on CheckMail's side — mark it and rotate
+                    const nextKey = await markKeyExhausted(keyData.id);
+                    if (nextKey) {
+                        // Track retries to prevent infinite loop
+                        item._retries402 = (item._retries402 || 0) + 1;
+                        if (item._retries402 > 5) {
+                            // Tried too many keys — all are exhausted
+                            console.warn('[validationQueue] All keys returning 402 — stopping queue');
+                            await updateEmailStatus(emailId, 'MEDIUM', 'PENDING', 'All verification credits exhausted');
+                            queue = []; // Clear remaining queue
+                            return;
+                        }
+                        console.log(`[validationQueue] Key exhausted (402), rotated to next key (attempt ${item._retries402})`);
+                        queue.unshift(item);
+                        return;
+                    } else {
+                        console.warn('[validationQueue] All CheckMail keys exhausted — stopping');
+                        await updateEmailStatus(emailId, 'MEDIUM', 'PENDING', 'All verification credits exhausted');
+                        queue = []; // Clear remaining queue
+                        return;
+                    }
+                } else if (response.status === 429) {
+                    // Rate limited — apply exponential backoff and retry
+                    consecutive429s++;
+                    rateLimitBackoff = Math.min(1000 * Math.pow(2, consecutive429s), 30000); // Max 30s
+                    console.warn(`[validationQueue] Rate limited (429). Backoff: ${rateLimitBackoff}ms`);
+                    // Push item back to retry after backoff
+                    queue.unshift(item);
+                    await new Promise(r => setTimeout(r, rateLimitBackoff));
                     return;
                 }
             } catch (fetchErr) {
@@ -306,6 +384,12 @@ async function validateOne(item) {
         }
 
         // Fallback: No API key or API failed — use MX check only (stays PENDING)
+        if (!keyData) {
+            console.warn('[validationQueue] No active API key found — cannot verify. Add keys in Settings.');
+            await updateEmailStatus(emailId, 'LOW', 'PENDING', 'No API key available');
+            queue = []; // Stop processing — no point continuing without a key
+            return;
+        }
         let mxHost;
         try {
             mxHost = await Promise.race([

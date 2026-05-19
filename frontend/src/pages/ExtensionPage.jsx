@@ -207,7 +207,6 @@ export default function ExtensionPage() {
                     <StatusPill label={health === 'ok' ? 'Backend online' : health === 'checking' ? 'Checking' : 'Backend down'} ok={health === 'ok'} />
                     <button
                         onClick={async () => {
-                            if (!confirm('Stop all extension activity and validation? This will cancel pending validations.')) return;
                             try {
                                 const res = await stopAllExtensionActivity();
                                 toast.success(res.data.message || 'All activity stopped');

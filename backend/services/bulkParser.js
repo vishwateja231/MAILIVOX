@@ -30,6 +30,12 @@ function isNameLine(line) {
     if (words.length < 2 || words.length > 5) return false;
     // Skip if any word is a known noise token
     if (words.some(w => SINGLE_WORD_NOISE.has(w.toLowerCase()))) return false;
+    // Skip lines that contain common LinkedIn noise phrases
+    const lower = trimmed.toLowerCase();
+    if (/\b(are mutual|is connected|is a |is an |mutual connection|you both|people also viewed)\b/.test(lower)) return false;
+    if (/\b(message|connect|follow|view profile|see all)\b/.test(lower)) return false;
+    // Skip lines ending with "is" or containing "are" (LinkedIn fragments like "Merline is", "Raya are mutual")
+    if (/\s+(is|are|was|were|has|have|had)$/i.test(trimmed)) return false;
     // Each word starts with a letter (case-insensitive — people type lowercase names)
     return words.every(w => /^[A-Za-z\u00C0-\u024F][a-zA-Z\u00C0-\u024F'\-\.]*$/.test(w));
 }
@@ -39,7 +45,25 @@ function isNameLine(line) {
  * Strategy: group consecutive lines until we hit a new "name" boundary.
  */
 function splitIntoBlocks(rawText) {
-    // Pre-process: split lines that have inline bullets (e.g., "John Doe • 2nd") into separate lines
+    // STEP 1: Split on connection degree markers (• 2nd, • 1st, • 3rd)
+    // These are the most reliable profile boundaries in continuous LinkedIn text
+    // Each profile starts with "Name • Xnd/st/rd"
+    
+    // First, try splitting by degree markers
+    // Pattern: Name (with spaces) followed by • 1st/2nd/3rd
+    // Use lookahead that requires WORD SPACE(S) BULLET DEGREE
+    const degreePattern = /([A-Z][A-Za-z\s.\-']+?)\s*[•·]\s*(?:1st|2nd|3rd)/g;
+    const degreeSplits = rawText.split(/(?=[A-Z][a-z]+[\s][A-Za-z\s.\-']+\s{1,5}[•·]\s*(?:1st|2nd|3rd))/);
+    
+    if (degreeSplits.length > 1) {
+        // Successfully split by degree markers
+        // Now inject newlines at known boundaries so parseLinkedInText can work
+        return degreeSplits
+            .map(block => injectNewlines(block.trim()))
+            .filter(block => block.length > 10);
+    }
+
+    // STEP 2: Fallback — split on newlines and use name detection
     const preprocessed = rawText
         .split(/\r?\n/)
         .flatMap(line => {
@@ -59,7 +83,6 @@ function splitIntoBlocks(rawText) {
             continue;
         }
 
-        // If this line looks like a name AND we already have a block, start a new one
         if (isNameLine(trimmed) && currentBlock.length > 0) {
             const blockText = currentBlock.join('\n').trim();
             if (blockText) blocks.push(blockText);
@@ -69,13 +92,33 @@ function splitIntoBlocks(rawText) {
         }
     }
 
-    // Push the last block
     const lastBlock = currentBlock.join('\n').trim();
     if (lastBlock) blocks.push(lastBlock);
 
     return blocks;
 }
 
+
+/**
+ * Inject newlines at known LinkedIn text boundaries so the per-profile parser can work.
+ * Handles continuous text like: "Name • 2ndHeadlineLocationConnectCurrent: Role at CompanyMutuals"
+ */
+function injectNewlines(block) {
+    let text = block;
+    // Remove the degree marker: "MD ZAHEER PASHA  • 2ndProgrammer..." → "MD ZAHEER PASHA\nProgrammer..."
+    text = text.replace(/^(.+?)\s*[•·]\s*(?:1st|2nd|3rd)\s*/, '$1\n');
+    // Insert newline before "Current:" 
+    text = text.replace(/(?<=\w)Current:/g, '\nCurrent:');
+    // Insert newline AFTER "at CompanyName" (company is 1-3 words starting with uppercase)
+    text = text.replace(/(at\s+[A-Z][A-Za-z]+(?:\s+[A-Z][a-z]+){0,2})(?=[A-Z][a-z])/g, '$1\n');
+    // Insert newline before known Indian locations
+    text = text.replace(/(?<=\w)(Hyderabad|Bangalore|Bengaluru|Mumbai|Delhi|Chennai|Pune|Kolkata|Noida|Gurugram|Guntur|Greater|Remote)/g, '\n$1');
+    // Insert newline before ", India" or state
+    text = text.replace(/(, Telangana|, Karnataka|, Maharashtra|, Andhra Pradesh|, Tamil Nadu|, India)/g, '$1\n');
+    // Insert newline before "Connect" / "Follow" / "Message"
+    text = text.replace(/(?<=\w)(Connect|Follow|Message)(?=Current|[A-Z]|$)/g, '\n$1\n');
+    return text;
+}
 
 /**
  * Deduplicate profiles by fullName + company combination.

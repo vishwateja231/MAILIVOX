@@ -191,7 +191,18 @@ function generatePermutations(nameParts, domain, knownPattern = null, opts = {})
         return aRank - bRank;
     });
 
-    return results;
+    // CAP: Generate max 7 patterns but return in tiers for progressive validation
+    // Tier 1 (top 3): validate first. If valid found, don't validate the rest.
+    // Tier 2 (next 4): only validated if tier 1 yields no valid result.
+    const MAX_EMAILS_PER_LEAD = 7;
+    const capped = results.slice(0, MAX_EMAILS_PER_LEAD);
+    
+    // Mark tiers for the validation queue to use
+    capped.forEach((r, i) => {
+        r.validationTier = i < 3 ? 1 : 2;
+    });
+    
+    return capped;
 }
 
 /**

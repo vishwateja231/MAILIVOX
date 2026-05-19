@@ -82,6 +82,22 @@ function sanitizeLinkedInName(rawName) {
         name = words.slice(0, 4).join(' ');
     }
 
+    // 15. Reject if the result looks like a role/headline, not a person name
+    // Common patterns: "ASE at Accenture", "SDE at Google", "Developer", "Engineer"
+    const rolePatterns = /^(ASE|SDE|SSE|SWE|Manager|Engineer|Developer|Specialist|Analyst|Director|Recruiter|Intern|Associate|Consultant|Architect|Designer|Lead|VP|CEO|CTO|CFO|COO|CIO)\b/i;
+    if (rolePatterns.test(name)) {
+        // Strip the role part — try to extract just the name after "at" or return empty
+        const atMatch = name.match(/\bat\s+(.+)/i);
+        if (atMatch) {
+            // "ASE at Accenture" → reject entirely (Accenture is company not name)
+            return '';
+        }
+        return ''; // Pure role like "Developer" — not a name
+    }
+    
+    // Also reject "Current: ..." patterns
+    if (/^current:/i.test(name)) return '';
+
     return name;
 }
 

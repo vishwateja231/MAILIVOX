@@ -504,6 +504,30 @@ router.delete('/sessions/:id', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+router.post('/sessions/bulk-delete', async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'ids must be a non-empty array' });
+        }
+        if (ids.length > 100) {
+            return res.status(400).json({ error: 'Cannot delete more than 100 sessions at once' });
+        }
+        // Only delete sessions that actually exist to avoid "record not found" errors
+        const existing = await prisma.session.findMany({
+            where: { id: { in: ids } },
+            select: { id: true }
+        });
+        const existingIds = existing.map(s => s.id);
+        if (existingIds.length === 0) {
+            return res.json({ success: true, deletedCount: 0 });
+        }
+        const deletions = existingIds.map(id => prisma.session.delete({ where: { id } }));
+        await prisma.$transaction(deletions);
+        res.json({ success: true, deletedCount: existingIds.length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.patch('/sessions/:id/archive', async (req, res) => {
     try {
         const { isArchived = true } = req.body;

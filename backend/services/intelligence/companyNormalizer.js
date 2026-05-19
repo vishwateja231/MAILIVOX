@@ -28,7 +28,6 @@ const ENTERPRISE_CACHE = {
     'stripe': 'stripe.com',
     'shopify': 'shopify.com',
     'twitter': 'x.com',
-    'linkedin': 'linkedin.com',
     'snap': 'snap.com',
     'snapchat': 'snap.com',
     'tiktok': 'tiktok.com',
@@ -63,6 +62,29 @@ const ENTERPRISE_CACHE = {
     'tata': 'tata.com',
     'mahindra': 'mahindra.com',
     'bajaj': 'bajaj.com',
+    'cgi': 'cgi.com',
+    'ltimindtree': 'ltimindtree.com',
+    'lti': 'ltimindtree.com',
+    'ltm': 'ltimindtree.com',
+    'mindtree': 'ltimindtree.com',
+    'tech mahindra': 'techmahindra.com',
+    'mphasis': 'mphasis.com',
+    'persistent': 'persistent.com',
+    'coforge': 'coforge.com',
+    'hexaware': 'hexaware.com',
+    'birlasoft': 'birlasoft.com',
+    'zensar': 'zensar.com',
+    'cyient': 'cyient.com',
+    'l&t': 'larsentoubro.com',
+    'larsen': 'larsentoubro.com',
+    'jio': 'jio.com',
+    'mu sigma': 'mu-sigma.com',
+    'thoughtworks': 'thoughtworks.com',
+    'epam': 'epam.com',
+    'dxc': 'dxc.com',
+    'atos': 'atos.net',
+    'ntt data': 'nttdata.com',
+    'publicis sapient': 'publicissapient.com',
 };
 
 // ─── Alias Mapping ───────────────────────────────────────────────────────────
@@ -99,6 +121,21 @@ const ALIAS_MAP = {
     'jp morgan': 'jpmorgan',
     'jp morgan chase': 'jpmorgan',
     'goldman sachs group': 'goldman sachs',
+    'cgi group': 'cgi',
+    'cgi inc': 'cgi',
+    'cgi federal': 'cgi',
+    'lti mindtree': 'ltimindtree',
+    'l&t infotech': 'ltimindtree',
+    'larsen & toubro infotech': 'ltimindtree',
+    'tech mahindra limited': 'tech mahindra',
+    'tech mahindra ltd': 'tech mahindra',
+    'mphasis limited': 'mphasis',
+    'persistent systems': 'persistent',
+    'coforge limited': 'coforge',
+    'hexaware technologies': 'hexaware',
+    'thoughtworks inc': 'thoughtworks',
+    'epam systems': 'epam',
+    'dxc technology': 'dxc',
 };
 
 /**
@@ -112,7 +149,7 @@ function normalizeCompany(raw) {
     }
 
     let cleaned = raw.trim().toLowerCase()
-        .replace(/\s*(pvt|private|ltd|limited|inc|llc|corp|corporation|co|company|group|technologies|solutions|services)\s*\.?\s*/gi, '')
+        .replace(/\b(pvt|private|ltd|limited|inc|llc|corp|corporation|co|company|group|technologies|solutions|services)\b\.?\s*/gi, '')
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -187,12 +224,13 @@ function propagateCompanyContext(profiles, overrideCompany = null) {
         const norm = normalizeCompany(overrideCompany);
         resolvedOverride = norm.normalized;
         overrideDomain = norm.domain;
+        // If no domain in cache, leave null — processOneProfile will use Clearbit API
     }
 
     const { dominantCompany, dominantDomain } = inferDominantCompany(profiles);
 
     return profiles.map(p => {
-        // Priority: override > profile's own > dominant
+        // Priority: override > profile's own (if valid) > dominant
         let company = p.company;
         let domain = null;
         let companySource = 'parsed';
@@ -201,12 +239,13 @@ function propagateCompanyContext(profiles, overrideCompany = null) {
             company = resolvedOverride;
             domain = overrideDomain;
             companySource = 'override';
-        } else if (company) {
+        } else if (company && isValidCompanyName(company)) {
             const norm = normalizeCompany(company);
             company = norm.normalized;
             domain = norm.domain;
             companySource = 'normalized';
         } else if (dominantCompany) {
+            // Company is missing OR looks like a person name → use dominant
             company = dominantCompany;
             domain = dominantDomain;
             companySource = 'inferred';
@@ -219,6 +258,41 @@ function propagateCompanyContext(profiles, overrideCompany = null) {
             companySource,
         };
     });
+}
+
+/**
+ * Check if a company name is valid (not a person name or junk).
+ */
+function isValidCompanyName(name) {
+    if (!name) return false;
+    const lower = name.toLowerCase().trim();
+    if (lower.length < 2) return false;
+    
+    // Platform names that get mistaken for companies (source of data, not employer)
+    const platformNames = new Set([
+        'linkedin', 'facebook', 'twitter', 'instagram', 'github',
+        'indeed', 'glassdoor', 'naukri', 'monster', 'dice',
+    ]);
+    if (platformNames.has(lower)) return false;
+    
+    // Single-word person names that get misidentified as companies
+    const personNames = new Set([
+        'kumar', 'singh', 'sharma', 'gupta', 'patel', 'reddy', 'rao', 'nair',
+        'mishra', 'jain', 'agarwal', 'verma', 'yadav', 'chauhan', 'pandey',
+        'sangam', 'kalyani', 'navudu', 'chiliveri', 'chikkula', 'sahay',
+        'saha', 'raza', 'ahmad', 'khan', 'ali', 'ansari', 'shaikh',
+        'john', 'smith', 'doe', 'james', 'david', 'michael', 'robert',
+        'unknown', 'none', 'na', 'nil', 'null', 'undefined',
+        'bharadwaj', 'thandram', 'navudu', 'chiliveri',
+    ]);
+    
+    const words = lower.split(/\s+/);
+    // Single-word and it's a person name → invalid
+    if (words.length === 1 && personNames.has(lower)) return false;
+    // Matches "Unknown" variants
+    if (/^(unknown|not\s*specified|n\/?a|none|—|-|–)$/i.test(lower)) return false;
+    
+    return true;
 }
 
 /**

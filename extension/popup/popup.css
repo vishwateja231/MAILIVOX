@@ -263,3 +263,28 @@ footer {
   border-color: var(--line);
   color: var(--muted);
 }
+
+
+/* Company Override Input */
+.company-override {
+  margin-bottom: 10px;
+}
+
+.company-override input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.company-override input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.company-override input::placeholder {
+  color: var(--muted);
+}

@@ -38,8 +38,22 @@ router.post('/extension/stop-all', async (_req, res) => {
     try {
         const { clearQueue } = require('../services/validation/validationQueue');
         const cleared = clearQueue();
+        
+        // Also stop the email delivery queue
+        try {
+            const emailQueue = require('../services/mail/emailQueue');
+            if (emailQueue.stop) emailQueue.stop();
+        } catch (_) {}
+        
+        // Stop follow-up processor
+        try {
+            const { stopFollowUpProcessor } = require('../services/mail/followUpProcessor');
+            if (stopFollowUpProcessor) stopFollowUpProcessor();
+        } catch (_) {}
+        
         broadcast('extension:global_stop', { cleared, ts: Date.now() });
-        res.json({ ok: true, cleared, message: `Stopped all activity. Cleared ${cleared} pending validations.` });
+        console.log(`[GLOBAL STOP] All queues cleared. Validation: ${cleared} items dropped.`);
+        res.json({ ok: true, cleared, message: `Everything stopped. Cleared ${cleared} validations, paused email queue and follow-ups.` });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

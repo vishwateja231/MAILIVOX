@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getSessions, deleteSession, archiveSession, renameSession } from '../api';
-import { Layers, Calendar, Users, Mail, Database, ChevronRight, Trash2, Archive, RotateCcw, Pencil, Check, X } from 'lucide-react';
+import { getSessions, deleteSession, bulkDeleteSessions, archiveSession, renameSession, stopAllExtensionActivity } from '../api';
+import { Layers, Calendar, Users, Mail, Database, ChevronRight, Trash2, Archive, RotateCcw, Pencil, Check, X, OctagonX, CheckSquare, Square } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import clsx from 'clsx';
@@ -14,6 +14,8 @@ export default function SessionsPage() {
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [editingId, setEditingId] = useState(null);
     const [editValue, setEditValue] = useState('');
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
 
     const load = () => {
         setLoading(true);
@@ -22,7 +24,7 @@ export default function SessionsPage() {
             .finally(() => setLoading(false));
     };
 
-    useEffect(() => { load(); }, [tab]);
+    useEffect(() => { load(); setSelectedIds(new Set()); }, [tab]);
 
     const startEdit = (id, currentName) => {
         setEditingId(id);
@@ -81,6 +83,36 @@ export default function SessionsPage() {
         }
     };
 
+    const toggleSelect = (id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.size === sessions.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(sessions.map(s => s.id)));
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        try {
+            await bulkDeleteSessions([...selectedIds]);
+            toast.success(`${selectedIds.size} session${selectedIds.size > 1 ? 's' : ''} deleted`);
+            setSessions(prev => prev.filter(s => !selectedIds.has(s.id)));
+            setSelectedIds(new Set());
+        } catch (e) {
+            toast.error(e.response?.data?.error || 'Bulk delete failed');
+        }
+        setBulkDeleteConfirm(false);
+    };
+
     return (
         <div className="space-y-6 max-w-5xl mx-auto">
             <div className="flex items-center justify-between">
@@ -88,6 +120,21 @@ export default function SessionsPage() {
                     <h1 className="text-3xl font-bold tracking-tight">Pipelines</h1>
                     <p className="text-gray-400 text-sm mt-1">History of all outreach intelligence runs.</p>
                 </div>
+                <button
+                    onClick={async () => {
+                        try {
+                            await stopAllExtensionActivity();
+                            toast.success('All processes stopped');
+                            load();
+                        } catch {
+                            toast.error('Failed to stop');
+                        }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/25 transition-all"
+                >
+                    <OctagonX className="w-4 h-4" />
+                    Stop All
+                </button>
             </div>
 
             {/* Tabs */}
@@ -111,6 +158,35 @@ export default function SessionsPage() {
             </div>
 
             <div className="space-y-4 relative">
+                {/* Bulk selection toolbar */}
+                {sessions.length > 0 && !loading && (
+                    <div className="flex items-center gap-3 pl-16 pr-4">
+                        <button
+                            onClick={toggleSelectAll}
+                            className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+                            title={selectedIds.size === sessions.length ? 'Deselect all' : 'Select all'}
+                        >
+                            {selectedIds.size === sessions.length && sessions.length > 0 ? (
+                                <CheckSquare className="w-4 h-4 text-primary" />
+                            ) : (
+                                <Square className="w-4 h-4" />
+                            )}
+                            <span>{selectedIds.size === sessions.length && sessions.length > 0 ? 'Deselect All' : 'Select All'}</span>
+                        </button>
+                        {selectedIds.size > 0 && (
+                            <div className="flex items-center gap-3 ml-auto">
+                                <span className="text-xs text-gray-400">{selectedIds.size} selected</span>
+                                <button
+                                    onClick={() => setBulkDeleteConfirm(true)}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/25 transition-all"
+                                >
+                                    <Trash2 className="w-4 h-4" />
+                                    Delete Selected ({selectedIds.size})
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
                 <div className="absolute left-6 top-4 bottom-4 w-px bg-white/10" />
                 {loading ? (
                     <div className="text-center py-10 text-gray-500">Loading sessions...</div>
@@ -128,10 +204,20 @@ export default function SessionsPage() {
                             key={s.id}
                             className="relative pl-16 pr-4"
                         >
-                            <div className={clsx("absolute left-[20px] top-6 w-3 h-3 rounded-full ring-4 ring-background z-10",
-                                tab === 'archived' ? 'bg-amber-500' : 'bg-primary'
-                            )} />
-                            <div className="glass-card p-6 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center hover:bg-surface/50 hover:border-primary/20 transition-all group">
+                        <button
+                                onClick={(e) => { e.stopPropagation(); toggleSelect(s.id); }}
+                                className="absolute left-[14px] top-5 z-10"
+                                title="Select session"
+                            >
+                                {selectedIds.has(s.id) ? (
+                                    <CheckSquare className="w-5 h-5 text-primary" />
+                                ) : (
+                                    <Square className="w-5 h-5 text-gray-600 hover:text-gray-400 transition-colors" />
+                                )}
+                            </button>
+                            <div className={clsx("glass-card p-6 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center hover:bg-surface/50 hover:border-primary/20 transition-all group",
+                                selectedIds.has(s.id) && 'border-primary/30 bg-primary/5'
+                            )}>
                                 {/* Clickable main area */}
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-3 mb-2">
@@ -281,6 +367,47 @@ export default function SessionsPage() {
                                 className="px-5 py-2 rounded-xl text-sm font-semibold bg-danger/20 hover:bg-danger/30 border border-danger/40 text-danger flex items-center gap-2 transition-all"
                             >
                                 <Trash2 className="w-4 h-4" /> Delete
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+
+            {/* Bulk Delete Confirmation Modal */}
+            {bulkDeleteConfirm && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setBulkDeleteConfirm(false)}>
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="bg-surface border border-danger/30 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-start gap-4 mb-6">
+                            <div className="p-3 rounded-xl bg-danger/15 border border-danger/30">
+                                <Trash2 className="w-6 h-6 text-danger" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-white mb-1">Delete {selectedIds.size} Sessions</h3>
+                                <p className="text-sm text-gray-400">
+                                    Are you sure you want to permanently delete <span className="text-white font-medium">{selectedIds.size} session{selectedIds.size > 1 ? 's' : ''}</span>?
+                                </p>
+                                <p className="text-xs text-gray-500 mt-2">
+                                    All leads, emails, and logs in these sessions will be permanently removed. This cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex gap-3 justify-end">
+                            <button
+                                onClick={() => setBulkDeleteConfirm(false)}
+                                className="px-5 py-2 rounded-xl text-sm font-medium bg-surface border border-white/10 text-gray-300 hover:bg-white/5 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleBulkDelete}
+                                className="px-5 py-2 rounded-xl text-sm font-semibold bg-danger/20 hover:bg-danger/30 border border-danger/40 text-danger flex items-center gap-2 transition-all"
+                            >
+                                <Trash2 className="w-4 h-4" /> Delete {selectedIds.size} Sessions
                             </button>
                         </div>
                     </motion.div>

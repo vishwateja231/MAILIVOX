@@ -47,7 +47,10 @@ function looksLikeName(line) {
     const words = line.trim().split(/\s+/);
     if (words.length < 1 || words.length > 6) return false;
     // Each word should start with a letter, and not be a common noise word
-    const noiseWords = new Set(['the', 'at', 'and', 'or', 'for', 'in', 'on', 'of', 'to', 'a', 'an', 'is', 'are', 'was']);
+    const noiseWords = new Set(['the', 'at', 'and', 'or', 'for', 'in', 'on', 'of', 'to', 'a', 'an', 'is', 'are', 'was', 'were', 'has', 'have', 'had', 'mutual', 'connected', 'connection', 'connections']);
+    // Reject if last word is a verb/noise (LinkedIn fragments like "Merline is", "Raya are")
+    const lastWord = words[words.length - 1].toLowerCase();
+    if (noiseWords.has(lastWord) && words.length > 1) return false;
     return words.every(w => /^[A-Za-z][A-Za-z'\-\.]*$/.test(w) && !noiseWords.has(w.toLowerCase()));
 }
 
@@ -66,12 +69,15 @@ function extractCompanyFromHeadline(headline) {
         /(?:\|\||\|)\s*([A-Za-z][A-Za-z0-9\s&\-\.,']+?)(?:\s*[|·\|]|$)/i,
     ];
 
+    // Platform names that should never be extracted as companies
+    const platformBlocklist = new Set(['linkedin', 'facebook', 'twitter', 'instagram', 'github', 'indeed', 'glassdoor', 'naukri']);
+
     for (const pat of patterns) {
         const m = headline.match(pat);
         if (m) {
             const candidate = m[1].trim();
-            // Filter out obvious non-company tokens like university codes e.g. NITK'25
             if (candidate && !/^[A-Z]{2,5}'\d{2}$/.test(candidate) && candidate.length > 1) {
+                if (platformBlocklist.has(candidate.toLowerCase())) continue;
                 return candidate;
             }
         }
@@ -160,7 +166,7 @@ function parseLinkedInText(rawText) {
                 'apple', 'google', 'microsoft', 'amazon', 'meta', 'facebook', 'netflix',
                 'tesla', 'nvidia', 'intel', 'ibm', 'oracle', 'salesforce', 'adobe',
                 'uber', 'lyft', 'airbnb', 'spotify', 'twitter', 'snap', 'pinterest',
-                'linkedin', 'paypal', 'stripe', 'shopify', 'zoom', 'slack', 'atlassian',
+                'paypal', 'stripe', 'shopify', 'zoom', 'slack', 'atlassian',
                 'samsung', 'sony', 'toshiba', 'honda', 'toyota', 'bmw', 'mercedes',
                 'infosys', 'tcs', 'wipro', 'hcl', 'cognizant', 'accenture', 'deloitte',
                 'kpmg', 'pwc', 'ey', 'mckinsey', 'bain', 'bcg', 'capgemini',

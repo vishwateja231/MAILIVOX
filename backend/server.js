@@ -85,10 +85,11 @@ app.listen(PORT, () => {
     try { emailQueue.start(); } catch (e) { console.error('[queue] Failed to start:', e.message); }
     try { startFollowUpProcessor(); } catch (e) { console.error('[followup] Failed to start:', e.message); }
 
-    try {
-        const { enqueueAllPending } = require('./services/validation/validationQueue');
-        setImmediate(() => enqueueAllPending().catch(e => console.error('[validation] Failed:', e.message)));
-    } catch (e) { console.error('[validation] Failed to load:', e.message); }
+    // Validation queue does NOT auto-start anymore — only runs when:
+    // 1. Pipeline generates new emails → enqueueLeadEmails()
+    // 2. User clicks "Force Validate" button in UI
+    // This prevents wasting API credits on restart.
+    console.log('[validation] Queue ready (on-demand only — no auto-start)');
 });
 
 // Validation is now handled by the validationQueue service

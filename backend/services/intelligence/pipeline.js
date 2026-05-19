@@ -58,7 +58,10 @@ async function runPipeline(opts) {
     // ── Step 1: Parse raw text ───────────────────────────────────────────────
     send({ type: 'stage', data: { stage: 'parsing', message: 'Parsing raw LinkedIn text...' } });
 
+    // Use internal regex-based parser (no external API needed)
     const parseResult = parseBulkLinkedInText(rawText);
+    send({ type: 'log', data: { level: 'info', message: `Regex parser extracted ${parseResult.totalValid} profiles from ${parseResult.totalFound} blocks` } });
+
     stats.totalBlocks = parseResult.totalFound;
     stats.totalParsed = parseResult.profiles.length;
 
@@ -102,6 +105,34 @@ async function runPipeline(opts) {
 
     // ── Step 3: Deduplicate ──────────────────────────────────────────────────
     send({ type: 'stage', data: { stage: 'deduplicating', message: 'Removing duplicates...' } });
+
+    // Sanitize names: strip trailing noise words and phrases (LinkedIn artifacts)
+    const TRAILING_NOISE_PHRASES = /\s+(is a mutual|are mutual|is connected|is a |are a |is an |has been|have been|is$|are$|was$|were$|has$|have$|had$|the$|and$|or$|mutual$|connected$|connections?$)/gi;
+    const TRAILING_NOISE_WORDS = /\s+(is|are|was|were|has|have|had|the|and|or|mutual|connected|connections?)$/i;
+    // Also strip leading noise like "Engineer at" which is a role, not a name
+    const LEADING_ROLE_NOISE = /^(engineer|developer|manager|analyst|designer|consultant|specialist|recruiter|director|lead|head|vp|ceo|cto|founder|intern|trainee|associate|programmer|architect|scientist|officer|coordinator|executive|administrator|supervisor)\s*(at|@)?\s*/i;
+    filtered = filtered
+        .map(p => {
+            let name = (p.fullName || '').trim();
+            // Strip leading role prefix (e.g., "Engineer at CGI" → not a name)
+            if (LEADING_ROLE_NOISE.test(name)) {
+                return { ...p, fullName: '' }; // Mark for removal
+            }
+            // Strip trailing noise phrases first
+            name = name.replace(TRAILING_NOISE_PHRASES, '').trim();
+            // Then strip trailing single noise words repeatedly
+            let prev = '';
+            while (prev !== name) {
+                prev = name;
+                name = name.replace(TRAILING_NOISE_WORDS, '').trim();
+            }
+            return { ...p, fullName: name };
+        })
+        .filter(p => {
+            // After sanitization, reject names that are too short or single word
+            const words = p.fullName.trim().split(/\s+/);
+            return p.fullName.length >= 3 && words.length >= 2;
+        });
 
     const { unique, duplicates } = deduplicateProfiles(filtered);
     stats.duplicates = duplicates;
@@ -221,23 +252,55 @@ async function runPipeline(opts) {
 /**
  * Process a single enriched profile: domain → company → lead → emails.
  * CRITICAL RULE: If profile has a providedEmail, skip corporate generation entirely.
+ * CRITICAL RULE 2: If we have a company name, ALWAYS generate emails (use companyname.com as fallback).
  */
 async function processOneProfile(profile, sessionId) {
     const { fullName, company, companyDomain, role, location, linkedinUrl, providedEmail } = profile;
 
-    // Resolve domain via multi-layer discovery engine
-    const { discoverDomain } = require('../domain/domainDiscovery');
-    let domain = companyDomain;
+    // Resolve domain — priority: companyDomain (from override/cache) > discovery > heuristic
+    let domain = companyDomain || null;
     let discoveredPattern = null;
 
-    if (!domain) {
-        const discovery = await discoverDomain({
-            company,
-            manualDomain: companyDomain || null,
-            knownEmail: providedEmail || null,
-        });
-        domain = discovery.domain;
-        discoveredPattern = discovery.pattern;
+    // Block domains that are platforms (not real employers)
+    const BLOCKED_DOMAINS = new Set([
+        'linkedin.com', 'facebook.com', 'twitter.com', 'instagram.com',
+        'github.com', 'indeed.com', 'glassdoor.com', 'naukri.com',
+        'monster.com', 'dice.com', 'x.com',
+    ]);
+    if (domain && BLOCKED_DOMAINS.has(domain)) {
+        domain = null; // Don't generate emails for platform domains
+    }
+
+    if (!domain && company) {
+        // Try multi-layer discovery
+        try {
+            const { discoverDomain } = require('../domain/domainDiscovery');
+            const discovery = await discoverDomain({
+                company,
+                manualDomain: null,
+                knownEmail: providedEmail || null,
+            });
+            domain = discovery.domain;
+            discoveredPattern = discovery.pattern;
+        } catch (_) { /* discovery failed, continue */ }
+    }
+
+    // FINAL FALLBACK: If we have a company name but still no domain,
+    // use Clearbit autocomplete API to find the real domain.
+    // If that fails too, default to companyname.com so emails still get generated.
+    if (!domain && company) {
+        const { findDomain } = require('../domainFinder');
+        try {
+            const found = await findDomain(company);
+            if (found) domain = found;
+        } catch (_) { /* Clearbit failed, continue */ }
+        // If Clearbit returned nothing, use slug.com as last resort
+        if (!domain) {
+            const slug = company.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (slug.length >= 2) {
+                domain = `${slug}.com`;
+            }
+        }
     }
 
     let newCompany = false;
@@ -337,11 +400,11 @@ async function processOneProfile(profile, sessionId) {
 
 /**
  * Auto-validate all PENDING emails for a session (runs in background after pipeline).
+ * Uses the CheckMail API via the validation queue for accurate results.
  * Non-blocking — fires and forgets.
  */
 async function autoValidateSession(sessionId) {
     try {
-        const { validateLeadEmails } = require('../validation/bulkValidator');
         const leads = await prisma.lead.findMany({
             where: { sessionId },
             select: { id: true },
@@ -350,11 +413,11 @@ async function autoValidateSession(sessionId) {
         console.log(`[pipeline] Auto-validation started for ${leads.length} leads`);
         broadcast('validation:auto_started', { sessionId, totalLeads: leads.length });
 
+        // Use the validation queue (CheckMail API) instead of direct SMTP probing
         for (let i = 0; i < leads.length; i++) {
             try {
-                await validateLeadEmails(leads[i].id, { skipSmtp: false, concurrency: 3 });
+                await enqueueLeadEmails(leads[i].id);
             } catch (_) { /* continue on individual failures */ }
-            broadcast('validation:auto_progress', { sessionId, completed: i + 1, total: leads.length });
         }
 
         broadcast('validation:auto_complete', { sessionId, totalLeads: leads.length });
